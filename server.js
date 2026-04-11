@@ -625,8 +625,9 @@ app.get("/api/recipes/user/:userId", async (req, res) => {
     const request = pool.request();
     request.input("UserID", mssql.Int, req.params.userId);
 
+    // THÊM CHỮ "Status" VÀO DÒNG NÀY:
     const result = await request.query(`
-            SELECT RecipeID, Title, ImageURL, Difficulty, PrepTime, CookTime 
+            SELECT RecipeID, Title, ImageURL, Difficulty, PrepTime, CookTime, Status 
             FROM Recipes 
             WHERE UserID = @UserID 
             ORDER BY RecipeID DESC
@@ -911,6 +912,58 @@ app.delete("/api/admin/reject-recipe/:id", authenticateToken, isAdminOrStaff, as
         console.error("Lỗi từ chối bài:", err);
         res.status(500).json({ message: "Lỗi Server!" });
     }
+});
+
+// ==========================================
+// API: NGƯỜI DÙNG TỰ XÓA BÀI CỦA MÌNH
+// ==========================================
+app.delete("/api/recipes/delete/:id", authenticateToken, async (req, res) => {
+  try {
+    const recipeId = req.params.id;
+    const userId = req.user.userId; // Lấy ID của người đang đăng nhập từ Token
+    const userRole = req.user.role ? req.user.role.toUpperCase() : '';
+
+    await poolConnect;
+    const transaction = new mssql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      // 1. Kiểm tra xem món ăn có tồn tại không và ai là tác giả
+      const checkReq = new mssql.Request(transaction);
+      checkReq.input("RecipeID", mssql.Int, recipeId);
+      const checkRes = await checkReq.query("SELECT UserID FROM Recipes WHERE RecipeID = @RecipeID");
+
+      if (checkRes.recordset.length === 0) {
+        throw new Error("Không tìm thấy công thức này!");
+      }
+
+      // 2. Chặn nếu người xóa không phải là tác giả VÀ cũng không phải Admin
+      if (checkRes.recordset[0].UserID !== userId && userRole !== 'ADMIN') {
+        throw new Error("Bạn không có quyền xóa bài của người khác!");
+      }
+
+      // 3. Phải xóa Dữ liệu con (Nguyên liệu, Các bước) trước để không bị lỗi Khóa Ngoại (Foreign Key)
+      const deleteIngReq = new mssql.Request(transaction);
+      await deleteIngReq.input("RecipeID", mssql.Int, recipeId).query("DELETE FROM Ingredients WHERE RecipeID = @RecipeID");
+
+      const deleteStepReq = new mssql.Request(transaction);
+      await deleteStepReq.input("RecipeID", mssql.Int, recipeId).query("DELETE FROM RecipeSteps WHERE RecipeID = @RecipeID");
+
+      // 4. Cuối cùng mới xóa Công thức chính
+      const deleteRecipeReq = new mssql.Request(transaction);
+      await deleteRecipeReq.input("RecipeID", mssql.Int, recipeId).query("DELETE FROM Recipes WHERE RecipeID = @RecipeID");
+
+      await transaction.commit();
+      res.status(200).json({ message: "Đã xóa công thức thành công!" });
+      
+    } catch (error) {
+      await transaction.rollback();
+      res.status(403).json({ message: error.message });
+    }
+  } catch (err) {
+    console.error("Lỗi xóa bài:", err);
+    res.status(500).json({ message: "Lỗi Server!" });
+  }
 });
 
 // Khởi động Server
