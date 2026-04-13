@@ -171,10 +171,10 @@ app.post("/api/login", async (req, res) => {
     const token = jwt.sign(
       { userId: user.UserID, role: user.Role },
       JWT_SECRET,
-      { expiresIn: "24h" }
+      { expiresIn: "7d" }
     );
 
-    // Đăng nhập thành công! BỔ SUNG AVATAR, USERNAME, BIO để FE lưu LocalStorage
+    // Đăng nhập thành công! THÊM AVT, USERNAME, BIO để FE lưu LocalStorage
     res.json({
       message: `Chào mừng ${user.FullName} trở lại!`,
       token: token, // <-- Gửi token về cho React lưu lại
@@ -619,14 +619,24 @@ app.get("/api/recipes", async (req, res) => {
     const request = new mssql.Request(pool);
 
     const result = await request.query(`
-            SELECT 
-                r.RecipeID, r.Title, r.ImageURL, r.Difficulty, 
-                r.PrepTime, r.CookTime, r.CategoryID, u.FullName
-            FROM Recipes r
-            LEFT JOIN Users u ON r.UserID = u.UserID
-            WHERE r.Status = 'Approved' OR r.Status IS NULL
-            ORDER BY r.RecipeID DESC 
-        `);
+    SELECT 
+        r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
+        r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
+        ISNULL(c.AverageRating, 0) AS AverageRating,
+        ISNULL(c.ReviewCount, 0) AS ReviewCount
+    FROM Recipes r
+    LEFT JOIN Users u ON r.UserID = u.UserID
+    LEFT JOIN (
+        SELECT 
+            RecipeID, 
+            AVG(CAST(Rating AS FLOAT)) AS AverageRating, 
+            COUNT(CommentID) AS ReviewCount
+        FROM Comments
+        GROUP BY RecipeID
+    ) c ON r.RecipeID = c.RecipeID
+    WHERE r.Status = 'Approved' OR r.Status IS NULL
+    ORDER BY r.RecipeID DESC
+`);
 
     res.status(200).json(result.recordset);
   } catch (err) {
@@ -1115,8 +1125,14 @@ app.get("/api/comments/recipe/:recipeId", async (req, res) => {
 // 2. API ĐĂNG BÌNH LUẬN MỚI + GỬI THÔNG BÁO
 // ==========================================
 app.post("/api/comments", authenticateToken, async (req, res) => {
-    const { RecipeID, Content } = req.body;
+    // 1. LẤY THÊM Rating TỪ FRONTEND GỬI LÊN
+    const { RecipeID, Content, Rating } = req.body; 
     const UserID = req.user.userId; // Lấy từ Token đã giải mã
+
+    // 2. BỔ SUNG KIỂM TRA ĐÁNH GIÁ SAO
+    if (!Rating || Rating < 1 || Rating > 5) {
+        return res.status(400).json({ message: "Vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" });
+    }
 
     if (!Content || Content.trim() === "") {
         return res.status(400).json({ message: "Nội dung bình luận không được để trống!" });
@@ -1127,21 +1143,22 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
         await poolConnect;
         await transaction.begin();
 
-        // A: Chèn bình luận mới
+        // Bước A: Chèn bình luận mới VÀO DB KÈM RATING
         const commentReq = new mssql.Request(transaction);
         const resultComment = await commentReq
             .input("RecipeID", mssql.Int, RecipeID)
             .input("UserID", mssql.Int, UserID)
             .input("Content", mssql.NVarChar, Content)
+            .input("Rating", mssql.Int, Rating) // Thêm biến Rating vào SQL
             .query(`
-                INSERT INTO Comments (RecipeID, UserID, Content, CreatedAt)
+                INSERT INTO Comments (RecipeID, UserID, Content, Rating, CreatedAt)
                 OUTPUT INSERTED.*
-                VALUES (@RecipeID, @UserID, @Content, GETDATE())
+                VALUES (@RecipeID, @UserID, @Content, @Rating, GETDATE())
             `);
 
         const newComment = resultComment.recordset[0];
 
-        // B: Lấy thông tin User vừa bình luận (để trả về cho FE hiển thị ngay)
+        // Bước B: Lấy thông tin User vừa bình luận (để trả về cho FE hiển thị ngay)
         const userReq = new mssql.Request(transaction);
         const userResult = await userReq
             .input("UID", mssql.Int, UserID)
@@ -1149,7 +1166,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
         
         const userInfo = userResult.recordset[0];
 
-        // C: GỬI THÔNG BÁO CHO TÁC GIẢ (Nếu người cmt ko phải tác giả)
+        // Bước C: GỬI THÔNG BÁO CHO TÁC GIẢ (Nếu người cmt ko phải tác giả)
         const recipeReq = new mssql.Request(transaction);
         const recipeInfo = await recipeReq
             .input("RID", mssql.Int, RecipeID)
@@ -1160,7 +1177,8 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
         if (authorID !== UserID) {
             const notifyReq = new mssql.Request(transaction);
-            const notifyMsg = `${userInfo.FullName} đã bình luận về món "${recipeTitle}" của bạn.`;
+            // Sửa lại lời nhắn xíu cho ngầu: "đã đánh giá x sao..."
+            const notifyMsg = `${userInfo.FullName} đã đánh giá ${Rating} sao về món "${recipeTitle}" của bạn.`;
             
             await notifyReq
                 .input("TargetUID", mssql.Int, authorID)
@@ -1174,7 +1192,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
         await transaction.commit();
 
-        // Trả về dữ liệu gộp để FE update UI không cần load lại trang
+        // Trả về dữ liệu gộp để Frontend update UI không cần load lại trang
         res.status(201).json({
             ...newComment,
             FullName: userInfo.FullName,
