@@ -1384,6 +1384,88 @@ app.get("/api/favorites/my-favorites", authenticateToken, async (req, res) => {
     }
 });
 
+// ==========================================
+// API: GỢI Ý MÓN ĂN (GỌI SANG PYTHON AI SERVICE)
+// ==========================================
+app.get("/api/recipes/recommend/:id", async (req, res) => {
+    try {
+        const targetRecipeId = parseInt(req.params.id);
+
+        await poolConnect;
+        const request = new mssql.Request(pool);
+
+        // 1. Lấy tất cả món ăn ĐÃ DUYỆT kèm danh mục
+        const recipesResult = await request.query(`
+            SELECT r.RecipeID, r.Title, c.CategoryName
+            FROM Recipes r
+            LEFT JOIN Categories c ON r.CategoryID = c.CategoryID
+            WHERE r.Status = 'Approved' OR r.Status = 'Published' OR r.Status IS NULL
+        `);
+        let allRecipes = recipesResult.recordset;
+
+        // 2. Lấy tất cả nguyên liệu để ghép vào
+        const ingResult = await request.query(`
+            SELECT RecipeID, IngredientName
+            FROM Ingredients
+        `);
+        const allIngs = ingResult.recordset;
+
+        // 3. Nhào nặn dữ liệu để gửi cho Python
+        allRecipes = allRecipes.map(recipe => {
+            const ings = allIngs.filter(i => i.RecipeID === recipe.RecipeID).map(i => i.IngredientName).join(" ");
+            return {
+                RecipeID: recipe.RecipeID,
+                Title: recipe.Title || "",
+                CategoryName: recipe.CategoryName || "",
+                IngredientsText: ings
+            };
+        });
+
+        // 4. Gọi sang Python FastAPI (chạy ở cổng 8000)
+        const pythonResponse = await fetch("http://localhost:8000/api/recommend", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                target_recipe_id: targetRecipeId,
+                all_recipes: allRecipes
+            })
+        });
+        
+        const pythonData = await pythonResponse.json();
+        const recommendedIds = pythonData.recommended_ids;
+
+        if (!recommendedIds || recommendedIds.length === 0) {
+            return res.status(200).json([]); // Không có gợi ý
+        }
+
+        // 5. Lấy thông tin chi tiết của các món được AI gợi ý để hiển thị ra UI
+        const idList = recommendedIds.join(",");
+        const finalResult = await request.query(`
+            SELECT 
+                r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
+                r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
+                ISNULL(c.AverageRating, 0) AS AverageRating,
+                ISNULL(c.ReviewCount, 0) AS ReviewCount
+            FROM Recipes r
+            LEFT JOIN Users u ON r.UserID = u.UserID
+            LEFT JOIN (
+                SELECT RecipeID, AVG(CAST(Rating AS FLOAT)) AS AverageRating, COUNT(CommentID) AS ReviewCount
+                FROM Comments GROUP BY RecipeID
+            ) c ON r.RecipeID = c.RecipeID
+            WHERE r.RecipeID IN (${idList})
+        `);
+
+        // Sắp xếp lại đúng thứ tự độ tương đồng (Giống nhất lên đầu) mà Python đã trả về
+        const sortedFinalResult = recommendedIds.map(id => finalResult.recordset.find(r => r.RecipeID === id)).filter(Boolean);
+
+        res.status(200).json(sortedFinalResult);
+
+    } catch (err) {
+        console.error("Lỗi Hệ thống AI Recommend:", err);
+        res.status(500).json({ message: "Lỗi Server!" });
+    }
+});
+
 // Khởi động Server
 const PORT = 5000;
 app.listen(PORT, () => {
