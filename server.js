@@ -1292,6 +1292,98 @@ app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
     });
   };
 
+// ==========================================
+// API YÊU THÍCH - LƯU CÔNG THỨC
+// ==========================================
+
+// 1. Kiểm tra xem User đã lưu món này chưa
+app.get("/api/favorites/check/:recipeId", authenticateToken, async (req, res) => {
+    try {
+        const recipeId = req.params.recipeId;
+        const userId = req.user.userId;
+
+        await poolConnect;
+        const checkReq = new mssql.Request(pool);
+        const result = await checkReq
+            .input("UserID", mssql.Int, userId)
+            .input("RecipeID", mssql.Int, recipeId)
+            .query("SELECT 1 FROM Favorites WHERE UserID = @UserID AND RecipeID = @RecipeID");
+
+        res.status(200).json({ isSaved: result.recordset.length > 0 });
+    } catch (err) {
+        console.error("Lỗi kiểm tra lưu công thức:", err);
+        res.status(500).json({ message: "Lỗi Server!" });
+    }
+});
+
+// 2. button: Toggle (Lưu / Hủy lưu)
+app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
+    try {
+        const { RecipeID } = req.body;
+        const UserID = req.user.userId;
+
+        await poolConnect;
+        const request = new mssql.Request(pool);
+        
+        const checkResult = await request
+            .input("UserID", mssql.Int, UserID)
+            .input("RecipeID", mssql.Int, RecipeID)
+            .query("SELECT 1 FROM Favorites WHERE UserID = @UserID AND RecipeID = @RecipeID");
+
+        if (checkResult.recordset.length > 0) {
+            // Nếu đã có -> bỏ lưu (Xóa khỏi Favorites)
+            await request.query("DELETE FROM Favorites WHERE UserID = @UserID AND RecipeID = @RecipeID");
+            return res.status(200).json({ message: "Đã bỏ lưu công thức", isSaved: false });
+        } else {
+            // Nếu chưa có -> lưu (Thêm vào Favorites)
+            await request.query("INSERT INTO Favorites (UserID, RecipeID, CreatedAt) VALUES (@UserID, @RecipeID, GETDATE())");
+            return res.status(200).json({ message: "Đã lưu vào bộ sưu tập", isSaved: true });
+        }
+    } catch (err) {
+        console.error("Lỗi toggle lưu công thức:", err);
+        res.status(500).json({ message: "Lỗi Server!" });
+    }
+});
+
+// ==========================================
+// API: LẤY DANH SÁCH MÓN ĂN ĐÃ LƯU (YÊU THÍCH) CỦA USER
+// ==========================================
+app.get("/api/favorites/my-favorites", authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+
+        await poolConnect;
+        const request = new mssql.Request(pool);
+        const result = await request
+            .input("UserID", mssql.Int, userId)
+            .query(`
+                SELECT 
+                    r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
+                    r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
+                    ISNULL(c.AverageRating, 0) AS AverageRating,
+                    ISNULL(c.ReviewCount, 0) AS ReviewCount
+                FROM Favorites f
+                JOIN Recipes r ON f.RecipeID = r.RecipeID
+                LEFT JOIN Users u ON r.UserID = u.UserID
+                LEFT JOIN (
+                    SELECT 
+                        RecipeID, 
+                        AVG(CAST(Rating AS FLOAT)) AS AverageRating, 
+                        COUNT(CommentID) AS ReviewCount
+                    FROM Comments
+                    GROUP BY RecipeID
+                ) c ON r.RecipeID = c.RecipeID
+                WHERE f.UserID = @UserID
+                ORDER BY f.CreatedAt DESC
+            `);
+
+        res.status(200).json(result.recordset);
+    } catch (err) {
+        console.error("Lỗi lấy danh sách yêu thích:", err);
+        res.status(500).json({ message: "Lỗi Server!" });
+    }
+});
+
 // Khởi động Server
 const PORT = 5000;
 app.listen(PORT, () => {
