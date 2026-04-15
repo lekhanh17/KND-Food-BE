@@ -87,8 +87,8 @@ const config = {
 const pool = new mssql.ConnectionPool(config);
 const poolConnect = pool
   .connect()
-  .then(() => console.log("✅ Đã kết nối thành công tới SQL Server!"))
-  .catch((err) => console.error("❌ Lỗi kết nối Database: ", err));
+  .then(() => console.log("Đã kết nối thành công tới SQL Server!"))
+  .catch((err) => console.error("Lỗi kết nối Database: ", err));
 
 // ==========================================
 // 3. API DÀNH CHO REACT
@@ -1248,50 +1248,6 @@ app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
     }
 });
 
-
-// ==========================================
-  // XỬ LÝ XÓA BÌNH LUẬN DÙNG SWEETALERT
-  // ==========================================
-  const handleDeleteComment = async (commentId) => {
-    // Gọi bảng cảnh báo xịn sò của SweetAlert2
-    Swal.fire({
-      title: 'Xóa bình luận?',
-      text: "Bạn có chắc chắn muốn xóa bình luận này? Hành động này không thể hoàn tác.",
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#ef4444', // Màu đỏ (Tailwind: red-500)
-      cancelButtonColor: '#9ca3af',  // Màu xám (Tailwind: gray-400)
-      confirmButtonText: 'Xóa ngay',
-      cancelButtonText: 'Hủy',
-      customClass: {
-        popup: 'rounded-3xl shadow-2xl border border-gray-100' // Bo góc chuẩn form KND Food
-      }
-    }).then(async (result) => {
-      // Nếu người dùng bấm Xóa ngay
-      if (result.isConfirmed) {
-        try {
-          const token = localStorage.getItem("token");
-          const response = await fetch(`${API_BASE_URL}/comments/${commentId}`, {
-            method: "DELETE",
-            headers: { "Authorization": `Bearer ${token}` },
-          });
-
-          if (response.ok) {
-            // Xóa cmt khỏi danh sách
-            setComments((prev) => prev.filter((c) => c.id !== commentId));
-            toast.success("✅ Đã xóa bình luận!", toastConfig);
-          } else {
-            const data = await response.json();
-            toast.error(`❌ ${data.message || "Không thể xóa!"}`, toastConfig);
-          }
-        } catch (error) {
-          console.error("Lỗi xóa bình luận:", error);
-          toast.error("❌ Lỗi kết nối khi xóa!", toastConfig);
-        }
-      }
-    });
-  };
-
 // ==========================================
 // API YÊU THÍCH - LƯU CÔNG THỨC
 // ==========================================
@@ -1463,6 +1419,22 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
     } catch (err) {
         console.error("Lỗi Hệ thống AI Recommend:", err);
         res.status(500).json({ message: "Lỗi Server!" });
+    }
+});
+
+// ==========================================
+// API Lấy danh sách danh mục cho Navbar
+// ==========================================
+app.get('/api/categories', async (req, res) => {
+    try {
+        await poolConnect; // Đảm bảo kết nối đã sẵn sàng
+        const request = new mssql.Request(pool); // Truyền pool vào request
+        
+        const result = await request.query(`SELECT CategoryID, CategoryName FROM Categories`);
+        res.json(result.recordset);
+    } catch (err) {
+        console.error("Lỗi lấy Categories:", err);
+        res.status(500).json({ message: "Lỗi server" });
     }
 });
 
