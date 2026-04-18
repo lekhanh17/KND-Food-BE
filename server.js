@@ -506,6 +506,7 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
       CookTime,
       Servings,
       VideoUrl,
+      Status, // BỔ SUNG: Hứng biến Status từ Frontend gửi sang
     } = req.body;
 
     const ingredients = JSON.parse(req.body.ingredients);
@@ -527,6 +528,10 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
       finalVideoUrl = VideoUrl.trim();
     }
 
+    // BỔ SUNG: Chuyển đổi số 1 và 0 từ Frontend thành chữ tương ứng trong SQL
+    // Do dùng FormData nên số 1 và 0 khi sang Node.js sẽ là chuỗi '1' và '0'
+    const finalDbStatus = (Status === '1') ? 'Approved' : 'Pending';
+
     // 1. Thêm vào bảng Recipes
     const request = new mssql.Request(transaction);
     const resultRecipe = await request
@@ -539,10 +544,13 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
       .input("PrepTime", mssql.Int, PrepTime || 0)
       .input("CookTime", mssql.Int, CookTime || 0)
       .input("Servings", mssql.Int, Servings || 1)
-      .input("Difficulty", mssql.NVarChar, Difficulty).query(`
+      .input("Difficulty", mssql.NVarChar, Difficulty)
+      .input("Status", mssql.NVarChar, finalDbStatus) // BỔ SUNG: Truyền biến trạng thái vào
+      .query(`
                 INSERT INTO Recipes (UserID, CategoryID, Title, Description, ImageURL, VideoURL, PrepTime, CookTime, Servings, Difficulty, Status)
                 OUTPUT INSERTED.RecipeID
-                VALUES (@UserID, @CategoryID, @Title, @Description, @ImageURL, @VideoURL, @PrepTime, @CookTime, @Servings, @Difficulty, 'Pending')
+                -- ĐÃ SỬA: Thay 'Pending' cứng thành biến @Status linh hoạt
+                VALUES (@UserID, @CategoryID, @Title, @Description, @ImageURL, @VideoURL, @PrepTime, @CookTime, @Servings, @Difficulty, @Status)
             `);
 
     const newRecipeId = resultRecipe.recordset[0].RecipeID;
