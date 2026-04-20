@@ -6,7 +6,7 @@ const bcrypt = require("bcrypt");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const sql = require("mssql");
-const jwt = require("jsonwebtoken"); // Thư viện tạo Token
+const jwt = require("jsonwebtoken"); 
 
 const app = express();
 app.use(express.json());
@@ -16,16 +16,13 @@ app.use(cors());
 const multer = require("multer");
 const path = require("path");
 
-// Cấu hình cho phép FE truy cập vào thư mục uploads để lấy ảnh hiện lên web
 app.use("/uploads", express.static("uploads"));
 
-// Cấu hình "máy quét" Multer: Lưu ảnh vào đâu, tên file là gì?
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, "uploads/"); // Lưu vào thư mục uploads vừa tạo
+    cb(null, "uploads/"); 
   },
   filename: function (req, file, cb) {
-    // Đổi tên file thành thời gian hiện tại để không bao giờ bị trùng tên
     cb(null, Date.now() + path.extname(file.originalname));
   },
 });
@@ -36,7 +33,6 @@ const upload = multer({ storage: storage });
 // ==========================================
 const JWT_SECRET = process.env.JWT_SECRET || "KNDFOOD_SECRET_KEY";
 
-// 1. Kiểm tra Token (Bắt buộc phải có để lấy req.user)
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -50,17 +46,15 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-// 2. STAFF & ADMIN
 const isAdminOrStaff = (req, res, next) => {
-    const userRole = req.user.role ? req.user.role.toUpperCase() : ''; // Ép kiểu chữ hoa để không bị lỗi
+    const userRole = req.user.role ? req.user.role.toUpperCase() : ''; 
     if (userRole === 'ADMIN' || userRole === 'STAFF') {
-        next(); // Cho phép đi tiếp vào trang quản trị
+        next(); 
     } else {
         res.status(403).json({ message: "Bạn không có quyền truy cập!" });
     }
 };
 
-// 3. CHỈ ADMIN MỚI ĐƯỢC VÀO
 const isAdmin = (req, res, next) => {
     const userRole = req.user.role ? req.user.role.toUpperCase() : '';
     if (userRole === 'ADMIN') {
@@ -70,7 +64,7 @@ const isAdmin = (req, res, next) => {
     }
 };
 
-// 1. Cấu hình
+// 1. Cấu hình DB
 const config = {
   user: "sa",
   password: "Luxxie29@",
@@ -83,7 +77,6 @@ const config = {
   port: 1433,
 };
 
-// 2. Khởi tạo một Pool kết nối độc lập (Cách này an toàn 100%)
 const pool = new mssql.ConnectionPool(config);
 const poolConnect = pool
   .connect()
@@ -91,7 +84,7 @@ const poolConnect = pool
   .catch((err) => console.error("Lỗi kết nối Database: ", err));
 
 // ==========================================
-// 3. API DÀNH CHO REACT
+// API DÀNH CHO REACT
 // ==========================================
 
 // API Đăng ký tài khoản mới
@@ -126,7 +119,6 @@ app.post("/api/register", async (req, res) => {
 app.get("/api/users", authenticateToken, isAdminOrStaff, async (req, res) => {
   try {
     await poolConnect;
-    // Bổ sung thêm Avatar, Username, Bio vào danh sách hiển thị cho Admin
     const result = await pool
       .request()
       .query(
@@ -167,17 +159,15 @@ app.post("/api/login", async (req, res) => {
         .json({ message: "Email hoặc Mật khẩu không chính xác!" });
     }
 
-    // TẠO TOKEN ĐỂ KIỂM TRA QUYỀN
     const token = jwt.sign(
       { userId: user.UserID, role: user.Role },
       JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    // Đăng nhập thành công! THÊM AVT, USERNAME, BIO để FE lưu LocalStorage
     res.json({
       message: `Chào mừng ${user.FullName} trở lại!`,
-      token: token, // <-- Gửi token về cho React lưu lại
+      token: token, 
       user: {
         UserID: user.UserID,
         FullName: user.FullName,
@@ -224,15 +214,12 @@ app.delete("/api/users/:id", authenticateToken, isAdmin, async (req, res) => {
 app.put("/api/admin/update-role", authenticateToken, isAdmin, async (req, res) => {
   try {
     const { userId, newRole } = req.body;
-    console.log("Đang đổi quyền cho ID:", userId, "Thành:", newRole); 
-
     if (!userId || !newRole) {
       return res.status(400).json({ message: "Thiếu thông tin!" });
     }
 
-    // Thực hiện truy vấn
     const result = await pool.request()
-      .input("UserID", sql.Int, parseInt(userId)) // Ép kiểu về số cho chắc
+      .input("UserID", sql.Int, parseInt(userId)) 
       .input("Role", sql.NVarChar, newRole)
       .query(`
         UPDATE Users 
@@ -357,7 +344,7 @@ app.post(
 );
 
 // ==========================================
-// API QUÊN MẬT KHẨU (CHỈ GỬI MAIL & LƯU TOKEN)
+// API QUÊN MẬT KHẨU
 // ==========================================
 app.post("/api/forgot-password", async (req, res) => {
   try {
@@ -367,7 +354,6 @@ app.post("/api/forgot-password", async (req, res) => {
       return res.status(400).json({ message: "Vui lòng cung cấp email." });
     }
 
-    // 1. KIỂM TRA EMAIL TRONG DB
     const userResult = await pool
       .request()
       .input("Email", sql.NVarChar, Email)
@@ -379,10 +365,8 @@ app.post("/api/forgot-password", async (req, res) => {
         .json({ message: "Nếu email hợp lệ, liên kết đã được gửi!" });
     }
 
-    // 2. TẠO TOKEN NGẪU NHIÊN
     const token = crypto.randomBytes(32).toString("hex");
 
-    // 3. CHỈ LƯU TOKEN VÀ THỜI GIAN HẾT HẠN VÀO DATABASE (Đồng bộ GETDATE)
     await pool
       .request()
       .input("Token", sql.NVarChar, token)
@@ -393,14 +377,13 @@ app.post("/api/forgot-password", async (req, res) => {
         WHERE Email = @Email
       `);
 
-    // 4. CẤU HÌNH VÀ GỬI EMAIL
     const resetLink = `http://localhost:5173/reset-password?token=${token}&email=${Email}`;
 
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
         user: "lekhanhlux29@gmail.com",
-        pass: "fzkrdfkqkvyobtkh", // MẬT KHẨU ỨNG DỤNG
+        pass: "fzkrdfkqkvyobtkh", 
       },
     });
 
@@ -433,20 +416,14 @@ app.post("/api/forgot-password", async (req, res) => {
   }
 });
 
-// ==========================================
-// API ĐỔI MẬT KHẨU MỚI
-// ==========================================
 app.post("/api/reset-password", async (req, res) => {
   try {
     const { email, token, newPassword } = req.body;
-
-    console.log("🔍 React gửi lên:", { email, token });
 
     if (!email || !token || !newPassword) {
       return res.status(400).json({ message: "Thiếu thông tin bắt buộc!" });
     }
 
-    // 1. Kiểm tra Token
     const checkResult = await pool
       .request()
       .input("Email", sql.NVarChar, email)
@@ -463,17 +440,15 @@ app.post("/api/reset-password", async (req, res) => {
         .json({ message: "Đường dẫn không hợp lệ hoặc đã hết hạn!" });
     }
 
-    // 2. Mã hóa mật khẩu
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    // 3. Cập nhật vào DB
     await pool
       .request()
       .input("Password", sql.NVarChar, hashedPassword)
       .input("Email", sql.NVarChar, email).query(`
         UPDATE Users 
-        SET PasswordHash = @Password,  -- TÊN CỘT CHUẨN ĐÂY RỒI
+        SET PasswordHash = @Password, 
             ResetPasswordToken = NULL, 
             ResetTokenExpiry = NULL 
         WHERE Email = @Email
@@ -497,28 +472,17 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
     await transaction.begin();
 
     const {
-      UserID,
-      Title,
-      Description,
-      CategoryID,
-      Difficulty,
-      PrepTime,
-      CookTime,
-      Servings,
-      VideoUrl,
-      Status, // BỔ SUNG: Hứng biến Status từ Frontend gửi sang
+      UserID, Title, Description, CategoryID, Difficulty, PrepTime, CookTime, Servings, VideoUrl, Status, 
     } = req.body;
 
     const ingredients = JSON.parse(req.body.ingredients);
     const stepsDescriptions = JSON.parse(req.body.stepsDescriptions);
 
-    // Xử lý ảnh bìa
     const mainImageFile = req.files.find((f) => f.fieldname === "mainImage");
     const mainImageUrl = mainImageFile
       ? `http://localhost:5000/uploads/${mainImageFile.filename}`
       : null;
 
-    // --- Xử lý VIDEO ---
     let finalVideoUrl = null;
     const mainVideoFile = req.files.find((f) => f.fieldname === "mainVideo");
 
@@ -528,11 +492,8 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
       finalVideoUrl = VideoUrl.trim();
     }
 
-    // BỔ SUNG: Chuyển đổi số 1 và 0 từ Frontend thành chữ tương ứng trong SQL
-    // Do dùng FormData nên số 1 và 0 khi sang Node.js sẽ là chuỗi '1' và '0'
     const finalDbStatus = (Status === '1') ? 'Approved' : 'Pending';
 
-    // 1. Thêm vào bảng Recipes
     const request = new mssql.Request(transaction);
     const resultRecipe = await request
       .input("UserID", mssql.Int, UserID)
@@ -545,17 +506,15 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
       .input("CookTime", mssql.Int, CookTime || 0)
       .input("Servings", mssql.Int, Servings || 1)
       .input("Difficulty", mssql.NVarChar, Difficulty)
-      .input("Status", mssql.NVarChar, finalDbStatus) // BỔ SUNG: Truyền biến trạng thái vào
+      .input("Status", mssql.NVarChar, finalDbStatus) 
       .query(`
                 INSERT INTO Recipes (UserID, CategoryID, Title, Description, ImageURL, VideoURL, PrepTime, CookTime, Servings, Difficulty, Status)
                 OUTPUT INSERTED.RecipeID
-                -- ĐÃ SỬA: Thay 'Pending' cứng thành biến @Status linh hoạt
                 VALUES (@UserID, @CategoryID, @Title, @Description, @ImageURL, @VideoURL, @PrepTime, @CookTime, @Servings, @Difficulty, @Status)
             `);
 
     const newRecipeId = resultRecipe.recordset[0].RecipeID;
 
-    // 2. Thêm vào bảng Ingredients
     for (let ing of ingredients) {
       const reqIng = new mssql.Request(transaction);
       await reqIng
@@ -568,7 +527,6 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
                 `);
     }
 
-    // 3. Thêm vào bảng RecipeSteps
     for (let i = 0; i < stepsDescriptions.length; i++) {
       const stepFile = req.files.find((f) => f.fieldname === `stepImage_${i}`);
       const stepImageUrl = stepFile
@@ -586,10 +544,6 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
                 `);
     }
 
-    // ============================================================
-    // 4. LOGIC GỬI THÔNG BÁO CHO STAFF & ADMIN
-    // ============================================================
-    // Lấy danh sách tất cả những người có quyền duyệt bài
     const staffReq = new mssql.Request(transaction);
     const staffUsers = await staffReq.query("SELECT UserID FROM Users WHERE Role IN ('Admin', 'Staff')");
     
@@ -605,7 +559,7 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
                 VALUES (@StaffID, @Msg, 'System', '/admin', 0, GETDATE())
             `);
     }
-// ============================================================
+
     await transaction.commit();
     res.status(201).json({ message: "Đăng công thức thành công, đang chờ duyệt!" });
   } catch (err) {
@@ -864,31 +818,7 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// ==========================================
-// API LẤY THÔNG TIN HỒ SƠ QUA USERNAME
-// ==========================================
-app.get("/api/users/profile/:username", async (req, res) => {
-  try {
-    const username = req.params.username;
-    const result = await pool.request()
-      .input("Username", sql.NVarChar, username)
-      .query(`
-        SELECT UserID, FullName, Username, Avatar, Bio, Role 
-        FROM Users 
-        WHERE Username = @Username
-      `);
-
-    if (result.recordset.length === 0) {
-      return res.status(404).json({ message: "Người dùng không tồn tại" });
-    }
-    
-    res.status(200).json(result.recordset[0]);
-  } catch (error) {
-    console.error("Lỗi lấy profile:", error);
-    res.status(500).json({ message: "Lỗi máy chủ" });
-  }
-});
-
+// LƯU Ý: ĐÃ XÓA BỎ API BỊ TRÙNG LẶP "/api/users/profile/:username" ĐỂ KHÔNG BỊ XUNG ĐỘT
 
 // ==========================================
 // API DÀNH CHO NHÂN VIÊN DUYỆT BÀI
@@ -920,7 +850,6 @@ app.put("/api/admin/approve-recipe/:id", authenticateToken, isAdminOrStaff, asyn
         await poolConnect;
         await transaction.begin();
 
-        // A: Lấy thông tin UserID và title của món ăn trước khi duyệt
         const infoReq = new mssql.Request(transaction);
         const infoResult = await infoReq.input("RecipeID", mssql.Int, id)
             .query("SELECT UserID, Title FROM Recipes WHERE RecipeID = @RecipeID");
@@ -930,12 +859,10 @@ app.put("/api/admin/approve-recipe/:id", authenticateToken, isAdminOrStaff, asyn
         }
         const { UserID, Title } = infoResult.recordset[0];
 
-        // B: cập nhật trạng thái bài viết
         const updateReq = new mssql.Request(transaction);
         await updateReq.input("RecipeID", mssql.Int, id)
             .query("UPDATE Recipes SET Status = 'Approved' WHERE RecipeID = @RecipeID");
 
-        // C: Tự động gửi thông báo cho chủ bài viết
         const notifyReq = new mssql.Request(transaction);
         const msg = `Chúc mừng! Món "${Title}" của bạn đã được phê duyệt và hiển thị lên trang chủ.`;
         await notifyReq.input("UserID", mssql.Int, UserID)
@@ -964,14 +891,12 @@ app.delete("/api/admin/reject-recipe/:id", authenticateToken, isAdminOrStaff, as
         await poolConnect;
         await transaction.begin();
 
-        // A: Lấy thông tin để biết gửi thông báo cho ai
         const infoReq = new mssql.Request(transaction);
         const infoResult = await infoReq.input("RecipeID", mssql.Int, id)
             .query("SELECT UserID, Title FROM Recipes WHERE RecipeID = @RecipeID");
 
         if (infoResult.recordset.length > 0) {
             const { UserID, Title } = infoResult.recordset[0];
-            // B: Gửi thông báo lỗi
             const notifyReq = new mssql.Request(transaction);
             const msg = `Rất tiếc! Bài đăng "${Title}" đã bị từ chối do không phù hợp với tiêu chuẩn nội dung.`;
             await notifyReq.input("UserID", mssql.Int, UserID)
@@ -983,7 +908,6 @@ app.delete("/api/admin/reject-recipe/:id", authenticateToken, isAdminOrStaff, as
                 `);
         }
 
-        // C: Xóa dữ liệu (xóa con trước cha)
         await new mssql.Request(transaction).input("RID", mssql.Int, id).query("DELETE FROM Ingredients WHERE RecipeID = @RID");
         await new mssql.Request(transaction).input("RID", mssql.Int, id).query("DELETE FROM RecipeSteps WHERE RecipeID = @RID");
         await new mssql.Request(transaction).input("RID", mssql.Int, id).query("DELETE FROM Recipes WHERE RecipeID = @RID");
@@ -1002,7 +926,7 @@ app.delete("/api/admin/reject-recipe/:id", authenticateToken, isAdminOrStaff, as
 app.delete("/api/recipes/delete/:id", authenticateToken, async (req, res) => {
   try {
     const recipeId = req.params.id;
-    const userId = req.user.userId; // Lấy ID của người đang đăng nhập từ Token
+    const userId = req.user.userId; 
     const userRole = req.user.role ? req.user.role.toUpperCase() : '';
 
     await poolConnect;
@@ -1010,7 +934,6 @@ app.delete("/api/recipes/delete/:id", authenticateToken, async (req, res) => {
     await transaction.begin();
 
     try {
-      // 1. Kiểm tra xem món ăn có tồn tại ko & ai là tác giả
       const checkReq = new mssql.Request(transaction);
       checkReq.input("RecipeID", mssql.Int, recipeId);
       const checkRes = await checkReq.query("SELECT UserID FROM Recipes WHERE RecipeID = @RecipeID");
@@ -1019,19 +942,16 @@ app.delete("/api/recipes/delete/:id", authenticateToken, async (req, res) => {
         throw new Error("Không tìm thấy công thức này!");
       }
 
-      // 2. Chặn nếu người xóa không phải là tác giả & ko phải Admin
       if (checkRes.recordset[0].UserID !== userId && userRole !== 'ADMIN') {
         throw new Error("Bạn không có quyền xóa bài của người khác!");
       }
 
-      // 3. Phải xóa dữ liệu con (Nguyên liệu, các bước) trước để không bị lỗi FK
       const deleteIngReq = new mssql.Request(transaction);
       await deleteIngReq.input("RecipeID", mssql.Int, recipeId).query("DELETE FROM Ingredients WHERE RecipeID = @RecipeID");
 
       const deleteStepReq = new mssql.Request(transaction);
       await deleteStepReq.input("RecipeID", mssql.Int, recipeId).query("DELETE FROM RecipeSteps WHERE RecipeID = @RecipeID");
 
-      // 4. Cuối cùng mới xóa Công thức chính
       const deleteRecipeReq = new mssql.Request(transaction);
       await deleteRecipeReq.input("RecipeID", mssql.Int, recipeId).query("DELETE FROM Recipes WHERE RecipeID = @RecipeID");
 
@@ -1133,11 +1053,9 @@ app.get("/api/comments/recipe/:recipeId", async (req, res) => {
 // 2. API ĐĂNG BÌNH LUẬN MỚI + GỬI THÔNG BÁO
 // ==========================================
 app.post("/api/comments", authenticateToken, async (req, res) => {
-    // 1. LẤY THÊM Rating TỪ FRONTEND GỬI LÊN
     const { RecipeID, Content, Rating } = req.body; 
-    const UserID = req.user.userId; // Lấy từ Token đã giải mã
+    const UserID = req.user.userId; 
 
-    // 2. BỔ SUNG KIỂM TRA ĐÁNH GIÁ SAO
     if (!Rating || Rating < 1 || Rating > 5) {
         return res.status(400).json({ message: "Vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" });
     }
@@ -1151,13 +1069,12 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
         await poolConnect;
         await transaction.begin();
 
-        // Bước A: Chèn bình luận mới VÀO DB KÈM RATING
         const commentReq = new mssql.Request(transaction);
         const resultComment = await commentReq
             .input("RecipeID", mssql.Int, RecipeID)
             .input("UserID", mssql.Int, UserID)
             .input("Content", mssql.NVarChar, Content)
-            .input("Rating", mssql.Int, Rating) // Thêm biến Rating vào SQL
+            .input("Rating", mssql.Int, Rating) 
             .query(`
                 INSERT INTO Comments (RecipeID, UserID, Content, Rating, CreatedAt)
                 OUTPUT INSERTED.*
@@ -1166,7 +1083,6 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
         const newComment = resultComment.recordset[0];
 
-        // Bước B: Lấy thông tin User vừa bình luận (để trả về cho FE hiển thị ngay)
         const userReq = new mssql.Request(transaction);
         const userResult = await userReq
             .input("UID", mssql.Int, UserID)
@@ -1174,7 +1090,6 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
         
         const userInfo = userResult.recordset[0];
 
-        // Bước C: GỬI THÔNG BÁO CHO TÁC GIẢ (Nếu người cmt ko phải tác giả)
         const recipeReq = new mssql.Request(transaction);
         const recipeInfo = await recipeReq
             .input("RID", mssql.Int, RecipeID)
@@ -1185,7 +1100,6 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
         if (authorID !== UserID) {
             const notifyReq = new mssql.Request(transaction);
-            // Sửa lại lời nhắn xíu cho ngầu: "đã đánh giá x sao..."
             const notifyMsg = `${userInfo.FullName} đã đánh giá ${Rating} sao về món "${recipeTitle}" của bạn.`;
             
             await notifyReq
@@ -1200,7 +1114,6 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
         await transaction.commit();
 
-        // Trả về dữ liệu gộp để Frontend update UI không cần load lại trang
         res.status(201).json({
             ...newComment,
             FullName: userInfo.FullName,
@@ -1219,11 +1132,10 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
     try {
         const { commentId } = req.params;
-        const currentUserId = req.user.userId; // ID người đang yêu cầu xóa
+        const currentUserId = req.user.userId; 
 
         await poolConnect;
 
-        // 1. Lấy thông tin bình luận và chủ bài viết để kiểm tra quyền
         const checkReq = await pool.request()
             .input("CID", mssql.Int, commentId)
             .query(`
@@ -1239,7 +1151,6 @@ app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
 
         const { CommentOwner, RecipeAuthor } = checkReq.recordset[0];
 
-        // 2. Kiểm tra: Nếu là chủ cmt hoặc chủ bài thì mới cho xóa
         if (currentUserId === CommentOwner || currentUserId === RecipeAuthor) {
             await pool.request()
                 .input("CID", mssql.Int, commentId)
@@ -1280,7 +1191,7 @@ app.get("/api/favorites/check/:recipeId", authenticateToken, async (req, res) =>
     }
 });
 
-// 2. button: Toggle (Lưu / Hủy lưu)
+// 2. button: Toggle (Lưu / Hủy lưu) KÈM GỬI THÔNG BÁO
 app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
     try {
         const { RecipeID } = req.body;
@@ -1301,6 +1212,26 @@ app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
         } else {
             // Nếu chưa có -> lưu (Thêm vào Favorites)
             await request.query("INSERT INTO Favorites (UserID, RecipeID, CreatedAt) VALUES (@UserID, @RecipeID, GETDATE())");
+            
+            // ====================================================
+            // ĐÃ THÊM: GỬI THÔNG BÁO CHO CHỦ BÀI KHI CÓ NGƯỜI LƯU BÀI
+            // ====================================================
+            const infoRes = await request.query(`
+                SELECT r.UserID AS AuthorID, r.Title, u.FullName 
+                FROM Recipes r, Users u 
+                WHERE r.RecipeID = @RecipeID AND u.UserID = @UserID
+            `);
+            if (infoRes.recordset.length > 0) {
+                const { AuthorID, Title, FullName } = infoRes.recordset[0];
+                if (AuthorID !== UserID) { // Không tự thông báo cho chính mình
+                    const msg = `${FullName} đã lưu công thức "${Title}" của bạn vào danh sách yêu thích.`;
+                    await request.query(`
+                        INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
+                        VALUES (${AuthorID}, N'${msg}', 'Favorite', '/recipe/${RecipeID}', 0, GETDATE())
+                    `);
+                }
+            }
+            
             return res.status(200).json({ message: "Đã lưu vào bộ sưu tập", isSaved: true });
         }
     } catch (err) {
@@ -1358,7 +1289,6 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
         await poolConnect;
         const request = new mssql.Request(pool);
 
-        // 1. Lấy tất cả món ăn ĐÃ DUYỆT kèm danh mục
         const recipesResult = await request.query(`
             SELECT r.RecipeID, r.Title, c.CategoryName
             FROM Recipes r
@@ -1367,14 +1297,12 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
         `);
         let allRecipes = recipesResult.recordset;
 
-        // 2. Lấy tất cả nguyên liệu để ghép vào
         const ingResult = await request.query(`
             SELECT RecipeID, IngredientName
             FROM Ingredients
         `);
         const allIngs = ingResult.recordset;
 
-        // 3. Nhào nặn dữ liệu để gửi cho Python
         allRecipes = allRecipes.map(recipe => {
             const ings = allIngs.filter(i => i.RecipeID === recipe.RecipeID).map(i => i.IngredientName).join(" ");
             return {
@@ -1385,7 +1313,6 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
             };
         });
 
-        // 4. Gọi sang Python FastAPI (chạy ở cổng 8000)
         const pythonResponse = await fetch("http://localhost:8000/api/recommend", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1399,10 +1326,9 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
         const recommendedIds = pythonData.recommended_ids;
 
         if (!recommendedIds || recommendedIds.length === 0) {
-            return res.status(200).json([]); // Không có gợi ý
+            return res.status(200).json([]); 
         }
 
-        // 5. Lấy thông tin chi tiết của các món được AI gợi ý để hiển thị ra UI
         const idList = recommendedIds.join(",");
         const finalResult = await request.query(`
             SELECT 
@@ -1419,7 +1345,6 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
             WHERE r.RecipeID IN (${idList})
         `);
 
-        // Sắp xếp lại đúng thứ tự độ tương đồng (Giống nhất lên đầu) mà Python đã trả về
         const sortedFinalResult = recommendedIds.map(id => finalResult.recordset.find(r => r.RecipeID === id)).filter(Boolean);
 
         res.status(200).json(sortedFinalResult);
@@ -1435,8 +1360,8 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
 // ==========================================
 app.get('/api/categories', async (req, res) => {
     try {
-        await poolConnect; // Đảm bảo kết nối đã sẵn sàng
-        const request = new mssql.Request(pool); // Truyền pool vào request
+        await poolConnect; 
+        const request = new mssql.Request(pool); 
         
         const result = await request.query(`SELECT CategoryID, CategoryName FROM Categories`);
         res.json(result.recordset);
@@ -1444,6 +1369,123 @@ app.get('/api/categories', async (req, res) => {
         console.error("Lỗi lấy Categories:", err);
         res.status(500).json({ message: "Lỗi server" });
     }
+});
+
+// ==========================================
+// LẤY THÔNG TIN PROFILE & THỐNG KÊ (FOLLOW, LIKES)
+// ==========================================
+app.get("/api/users/profile/:identifier", async (req, res) => {
+  try {
+    await poolConnect;
+    const request = new mssql.Request(pool);
+    const identifier = req.params.identifier;
+
+    const isNumeric = !isNaN(identifier) && !isNaN(parseFloat(identifier));
+
+    let whereClause = "";
+    if (isNumeric) {
+      request.input("UserID", mssql.Int, identifier);
+      whereClause = "WHERE U.UserID = @UserID";
+    } else {
+      request.input("Username", mssql.NVarChar, identifier);
+      whereClause = "WHERE U.Username = @Username";
+    }
+
+    const result = await request.query(`
+      SELECT 
+        U.UserID, U.FullName, U.Username, U.Avatar, U.Bio, U.Email,
+        (SELECT COUNT(*) FROM Follows WHERE FolloweeID = U.UserID) AS FollowerCount,
+        (SELECT COUNT(*) FROM Follows WHERE FollowerID = U.UserID) AS FollowingCount,
+        (SELECT COUNT(*) FROM Favorites F JOIN Recipes R ON F.RecipeID = R.RecipeID WHERE R.UserID = U.UserID) AS TotalLikes
+      FROM Users U
+      ${whereClause}
+    `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    }
+
+    res.json(result.recordset[0]);
+  } catch (error) {
+    console.error("Lỗi lấy profile:", error);
+    res.status(500).json({ message: "Lỗi Server" });
+  }
+});
+
+// ==========================================
+// FOLLOW / UNFOLLOW NGƯỜI DÙNG KÈM THÔNG BÁO
+// ==========================================
+app.post("/api/users/follow", async (req, res) => {
+  try {
+    await poolConnect;
+    const { FollowerID, TargetUserID } = req.body; 
+
+    if (FollowerID === TargetUserID) {
+      return res.status(400).json({ message: "Bạn không thể tự follow chính mình!" });
+    }
+
+    const request = new mssql.Request(pool);
+    request.input("FollowerID", mssql.Int, FollowerID);
+    request.input("TargetUserID", mssql.Int, TargetUserID);
+
+    const checkFollow = await request.query(`
+      SELECT * FROM Follows 
+      WHERE FollowerID = @FollowerID AND FolloweeID = @TargetUserID
+    `);
+
+    if (checkFollow.recordset.length > 0) {
+      // Bỏ theo dõi
+      await request.query(`
+        DELETE FROM Follows 
+        WHERE FollowerID = @FollowerID AND FolloweeID = @TargetUserID
+      `);
+      res.json({ isFollowing: false, message: "Đã hủy theo dõi" });
+    } else {
+      // Đang theo dõi
+      await request.query(`
+        INSERT INTO Follows (FollowerID, FolloweeID) 
+        VALUES (@FollowerID, @TargetUserID)
+      `);
+      
+      // ====================================================
+      // ĐÃ THÊM: BẮN THÔNG BÁO CHO NGƯỜI ĐƯỢC FOLLOW
+      // ====================================================
+      const userRes = await request.query(`SELECT FullName, Username FROM Users WHERE UserID = @FollowerID`);
+      if (userRes.recordset.length > 0) {
+          const follower = userRes.recordset[0];
+          const msg = `${follower.FullName} đã bắt đầu theo dõi bạn.`;
+          await request.query(`
+              INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
+              VALUES (@TargetUserID, N'${msg}', 'Follow', '/${follower.Username}', 0, GETDATE())
+          `);
+      }
+      
+      res.json({ isFollowing: true, message: "Đã bắt đầu theo dõi" });
+    }
+  } catch (error) {
+    console.error("Lỗi xử lý follow:", error);
+    res.status(500).json({ message: "Lỗi Server" });
+  }
+});
+
+// API KIỂM TRA TRẠNG THÁI FOLLOW 
+app.get("/api/users/check-follow", async (req, res) => {
+  try {
+    await poolConnect;
+    const { followerId, followeeId } = req.query;
+    
+    const request = new mssql.Request(pool);
+    request.input("FollowerID", mssql.Int, followerId);
+    request.input("FolloweeID", mssql.Int, followeeId);
+    
+    const result = await request.query(`
+      SELECT 1 FROM Follows WHERE FollowerID = @FollowerID AND FolloweeID = @FolloweeID
+    `);
+    
+    res.json({ isFollowing: result.recordset.length > 0 });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi Server" });
+  }
 });
 
 // Khởi động Server
