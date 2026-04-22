@@ -1488,6 +1488,46 @@ app.get("/api/users/check-follow", async (req, res) => {
   }
 });
 
+// ==========================================
+// API LẤY DANH SÁCH NGƯỜI THEO DÕI (FOLLOWERS)
+// ==========================================
+app.get("/api/users/:id/followers", async (req, res) => {
+  try {
+    await poolConnect;
+    const request = new mssql.Request(pool);
+    const result = await request.input("UserID", mssql.Int, req.params.id).query(`
+      SELECT U.UserID, U.Username, U.FullName, U.Avatar 
+      FROM Follows F
+      JOIN Users U ON F.FollowerID = U.UserID
+      WHERE F.FolloweeID = @UserID
+      ORDER BY F.CreatedAt DESC
+    `);
+    res.json(result.recordset);
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi lấy danh sách Follower" });
+  }
+});
+
+// ==========================================
+// API LẤY DANH SÁCH ĐANG THEO DÕI (FOLLOWING)
+// ==========================================
+app.get("/api/users/:id/following", async (req, res) => {
+  try {
+    await poolConnect;
+    const request = new mssql.Request(pool);
+    const result = await request.input("UserID", mssql.Int, req.params.id).query(`
+      SELECT U.UserID, U.Username, U.FullName, U.Avatar 
+      FROM Follows F
+      JOIN Users U ON F.FolloweeID = U.UserID
+      WHERE F.FollowerID = @UserID
+      ORDER BY F.CreatedAt DESC
+    `);
+    res.json(result.recordset);
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi lấy danh sách Following" });
+  }
+});
+
 // Khởi động Server
 const PORT = 5000;
 app.listen(PORT, () => {
