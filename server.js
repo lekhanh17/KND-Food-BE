@@ -779,6 +779,42 @@ app.put("/api/recipes/update/:id", async (req, res) => {
 });
 
 // ==========================================
+// API LẤY DANH SÁCH MÓN ĂN NỔI BẬT (TOP RATING)
+// ==========================================
+app.get("/api/recipes/featured", async (req, res) => {
+  try {
+    await poolConnect;
+    const request = new mssql.Request(pool);
+
+    // Dùng INNER JOIN để loại bỏ hoàn toàn những món CHƯA CÓ ĐÁNH GIÁ
+    // Sắp xếp theo AverageRating giảm dần (Top sao lên trước), nếu bằng sao thì ưu tiên ReviewCount nhiều hơn
+    const result = await request.query(`
+      SELECT TOP 4 
+          r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
+          r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
+          c.AverageRating, c.ReviewCount
+      FROM Recipes r
+      LEFT JOIN Users u ON r.UserID = u.UserID
+      INNER JOIN (
+          SELECT 
+              RecipeID, 
+              AVG(CAST(Rating AS FLOAT)) AS AverageRating, 
+              COUNT(CommentID) AS ReviewCount
+          FROM Comments
+          GROUP BY RecipeID
+      ) c ON r.RecipeID = c.RecipeID
+      WHERE r.Status = 'Approved' OR r.Status = 'Published'
+      ORDER BY c.AverageRating DESC, c.ReviewCount DESC
+    `);
+
+    res.status(200).json(result.recordset);
+  } catch (err) {
+    console.error("Lỗi lấy món ăn nổi bật:", err);
+    res.status(500).json({ message: "Lỗi Server!" });
+  }
+});
+
+// ==========================================
 // API TÌM KIẾM NHANH (MÓN ĂN & NGƯỜI DÙNG)
 // ==========================================
 app.get("/api/search", async (req, res) => {
@@ -818,12 +854,9 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// LƯU Ý: ĐÃ XÓA BỎ API BỊ TRÙNG LẶP "/api/users/profile/:username" ĐỂ KHÔNG BỊ XUNG ĐỘT
-
 // ==========================================
 // API DÀNH CHO NHÂN VIÊN DUYỆT BÀI
 // ==========================================
-
 // 1. Lấy danh sách món ăn đang chờ duyệt
 app.get("/api/admin/pending-recipes", authenticateToken, isAdminOrStaff, async (req, res) => {
     try {
@@ -1050,11 +1083,11 @@ app.get("/api/comments/recipe/:recipeId", async (req, res) => {
 });
 
 // ==========================================
-// 2. API ĐĂNG BÌNH LUẬN MỚI + GỬI THÔNG BÁO
+// 2. API ĐĂNG BÌNH LUẬN MỚI + GỬI THÔNG BÁO (CHỐNG SPAM)
 // ==========================================
 app.post("/api/comments", authenticateToken, async (req, res) => {
     const { RecipeID, Content, Rating } = req.body; 
-    const UserID = req.user.userId; 
+    const UserID = req.user.userId; // Lấy từ Token đã giải mã
 
     if (!Rating || Rating < 1 || Rating > 5) {
         return res.status(400).json({ message: "Vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" });
@@ -1069,6 +1102,26 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
         await poolConnect;
         await transaction.begin();
 
+        // ====================================================
+        // ĐÃ THÊM: KIỂM TRA XEM TÀI KHOẢN ĐÃ ĐÁNH GIÁ CHƯA
+        // ====================================================
+        const checkSpamReq = new mssql.Request(transaction);
+        const checkSpamRes = await checkSpamReq
+            .input("CheckRecipeID", mssql.Int, RecipeID)
+            .input("CheckUserID", mssql.Int, UserID)
+            .query(`
+                SELECT CommentID FROM Comments 
+                WHERE RecipeID = @CheckRecipeID AND UserID = @CheckUserID
+            `);
+
+        if (checkSpamRes.recordset.length > 0) {
+            // Nếu đã từng đánh giá -> Hủy giao dịch và báo lỗi
+            await transaction.rollback();
+            return res.status(400).json({ message: "Bạn đã đánh giá món ăn này rồi. Mỗi tài khoản chỉ được đánh giá 1 lần!" });
+        }
+        // ====================================================
+
+        // Bước A: Chèn bình luận mới VÀO DB KÈM RATING
         const commentReq = new mssql.Request(transaction);
         const resultComment = await commentReq
             .input("RecipeID", mssql.Int, RecipeID)
@@ -1083,6 +1136,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
         const newComment = resultComment.recordset[0];
 
+        // Bước B: Lấy thông tin User vừa bình luận (để trả về cho FE hiển thị ngay)
         const userReq = new mssql.Request(transaction);
         const userResult = await userReq
             .input("UID", mssql.Int, UserID)
@@ -1090,6 +1144,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
         
         const userInfo = userResult.recordset[0];
 
+        // Bước C: GỬI THÔNG BÁO CHO TÁC GIẢ (Nếu người cmt ko phải tác giả)
         const recipeReq = new mssql.Request(transaction);
         const recipeInfo = await recipeReq
             .input("RID", mssql.Int, RecipeID)
@@ -1114,6 +1169,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
         await transaction.commit();
 
+        // Trả về dữ liệu gộp để Frontend update UI không cần load lại trang
         res.status(201).json({
             ...newComment,
             FullName: userInfo.FullName,
@@ -1448,7 +1504,7 @@ app.post("/api/users/follow", async (req, res) => {
       `);
       
       // ====================================================
-      // ĐÃ THÊM: BẮN THÔNG BÁO CHO NGƯỜI ĐƯỢC FOLLOW
+      // BẮN THÔNG BÁO CHO NGƯỜI ĐƯỢC FOLLOW
       // ====================================================
       const userRes = await request.query(`SELECT FullName, Username FROM Users WHERE UserID = @FollowerID`);
       if (userRes.recordset.length > 0) {
