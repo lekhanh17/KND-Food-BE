@@ -1019,7 +1019,7 @@ app.delete(
 );
 
 // ==========================================
-// API: NGƯỜI DÙNG TỰ XÓA BÀI CỦA MÌNH
+// API USER TỰ XÓA BÀI CỦA MÌNH
 // ==========================================
 app.delete("/api/recipes/delete/:id", authenticateToken, async (req, res) => {
   try {
@@ -1105,7 +1105,7 @@ app.put("/api/notifications/read-all", authenticateToken, async (req, res) => {
   }
 });
 
-// API: Xóa tất cả thông báo ĐÃ ĐỌC
+// API: Xóa tất cả thông báo đã đọc
 app.delete(
   "/api/notifications/delete-read",
   authenticateToken,
@@ -1133,7 +1133,7 @@ app.delete(
 );
 
 // ============================================
-// 1. API LẤY DANH SÁCH BÌNH LUẬN CỦA 1 MÓN ĂN
+// API LẤY DANH SÁCH BÌNH LUẬN CỦA 1 MÓN ĂN
 // ============================================
 app.get("/api/comments/recipe/:recipeId", async (req, res) => {
   try {
@@ -1161,7 +1161,7 @@ app.get("/api/comments/recipe/:recipeId", async (req, res) => {
 });
 
 // ==========================================
-// 2. API ĐĂNG BÌNH LUẬN MỚI + GỬI THÔNG BÁO (CHỐNG SPAM)
+// API ĐĂNG BÌNH LUẬN MỚI + GỬI THÔNG BÁO (CHỐNG SPAM)
 // ==========================================
 app.post("/api/comments", authenticateToken, async (req, res) => {
   const { RecipeID, Content, Rating } = req.body;
@@ -1185,7 +1185,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
     await transaction.begin();
 
     // ====================================================
-    // ĐÃ THÊM: KIỂM TRA XEM TÀI KHOẢN ĐÃ ĐÁNH GIÁ CHƯA
+    // KIỂM TRA XEM TÀI KHOẢN ĐÃ ĐÁNH GIÁ CHƯA
     // ====================================================
     const checkSpamReq = new mssql.Request(transaction);
     const checkSpamRes = await checkSpamReq
@@ -1196,7 +1196,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
             `);
 
     if (checkSpamRes.recordset.length > 0) {
-      // Nếu đã từng đánh giá -> Hủy giao dịch và báo lỗi
+      // Nếu đã từng đánh giá -> Báo lỗi
       await transaction.rollback();
       return res.status(400).json({
         message:
@@ -1229,7 +1229,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
     const userInfo = userResult.recordset[0];
 
-    // Bước C: GỬI THÔNG BÁO CHO TÁC GIẢ (Nếu người cmt ko phải tác giả)
+    // Bước C: Gửi thông báo cho Tác Giả (Nếu người cmt ko phải tác giả)
     const recipeReq = new mssql.Request(transaction);
     const recipeInfo = await recipeReq
       .input("RID", mssql.Int, RecipeID)
@@ -1267,7 +1267,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
   }
 });
 
-// API XÓA BÌNH LUẬN (Người viết hoặc Chủ bài viết)
+// API XÓA BÌNH LUẬN (Người viết hoặc Chủ bài đăng)
 app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
   try {
     const { commentId } = req.params;
@@ -1337,7 +1337,7 @@ app.get(
   },
 );
 
-// 2. button: Toggle (Lưu / Hủy lưu) KÈM GỬI THÔNG BÁO
+// 2. Nút Lưu / Hủy lưu KÈM GỬI THÔNG BÁO
 app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
   try {
     const { RecipeID } = req.body;
@@ -1368,7 +1368,7 @@ app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
       );
 
       // ====================================================
-      // ĐÃ THÊM: GỬI THÔNG BÁO CHO CHỦ BÀI KHI CÓ NGƯỜI LƯU BÀI
+      // GỬI THÔNG BÁO CHO CHỦ BÀI KHI CÓ NGƯỜI LƯU BÀI
       // ====================================================
       const infoRes = await request.query(`
                 SELECT r.UserID AS AuthorID, r.Title, u.FullName 
@@ -1398,7 +1398,7 @@ app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// API: LẤY DANH SÁCH MÓN ĂN ĐÃ LƯU (YÊU THÍCH) CỦA USER
+// API LẤY DANH SÁCH MÓN ĂN ĐÃ LƯU (YÊU THÍCH) CỦA USER
 // ==========================================
 app.get("/api/favorites/my-favorites", authenticateToken, async (req, res) => {
   try {
@@ -1435,7 +1435,7 @@ app.get("/api/favorites/my-favorites", authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// API: GỢI Ý MÓN ĂN (GỌI SANG PYTHON AI SERVICE)
+// API GỢI Ý MÓN ĂN (GỌI SANG PYTHON AI SERVICE)
 // ==========================================
 app.get("/api/recipes/recommend/:id", async (req, res) => {
   try {
@@ -1611,7 +1611,7 @@ app.post("/api/users/follow", async (req, res) => {
       `);
 
       // ====================================================
-      // BẮN THÔNG BÁO CHO NGƯỜI ĐƯỢC FOLLOW
+      // GỬI THÔNG BÁO CHO NGƯỜI ĐƯỢC FOLLOW
       // ====================================================
       const userRes = await request.query(
         `SELECT FullName, Username FROM Users WHERE UserID = @FollowerID`,
