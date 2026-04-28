@@ -470,7 +470,7 @@ app.post("/api/reset-password", async (req, res) => {
 });
 
 // ==========================================
-// API TẠO CÔNG THỨC MỚI (CÓ THÔNG BÁO CHO STAFF)
+// API TẠO CÔNG THỨC MỚI (CÓ THÔNG BÁO CHO ADMIN/STAFF)
 // ==========================================
 app.post("/api/recipes/create", upload.any(), async (req, res) => {
   const transaction = new mssql.Transaction(pool);
@@ -489,7 +489,6 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
       CookTime,
       Servings,
       VideoUrl,
-      Status,
     } = req.body;
 
     const ingredients = JSON.parse(req.body.ingredients);
@@ -509,7 +508,25 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
       finalVideoUrl = VideoUrl.trim();
     }
 
-    const finalDbStatus = Status === "1" ? "Approved" : "Pending";
+    // ==========================================
+    // TỰ ĐỘNG CHECK QUYỀN TỪ DATABASE
+    // ==========================================
+    let finalDbStatus = "Pending"; // Mặc định ai đăng cũng là chờ duyệt
+    
+    // Gọi DB xem user này role gì
+    const checkRoleReq = new mssql.Request(transaction);
+    const roleResult = await checkRoleReq
+      .input("CheckUID", mssql.Int, UserID)
+      .query("SELECT Role FROM Users WHERE UserID = @CheckUID");
+
+    if (roleResult.recordset.length > 0) {
+      const userRole = roleResult.recordset[0].Role;
+      // Nếu là Admin hoặc Staff thì tự động duyệt bài
+      if (userRole === "Admin" || userRole === "Staff") {
+        finalDbStatus = "Approved";
+      }
+    }
+    // ==========================================
 
     const request = new mssql.Request(transaction);
     const resultRecipe = await request
@@ -560,27 +577,37 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
                 `);
     }
 
-    const staffReq = new mssql.Request(transaction);
-    const staffUsers = await staffReq.query(
-      "SELECT UserID FROM Users WHERE Role IN ('Admin', 'Staff')",
-    );
+    // ==================================================
+    // CHỈ THÔNG BÁO NẾU BÀI VIẾT LÀ PENDING
+    // ==================================================
+    if (finalDbStatus === "Pending") {
+      const staffReq = new mssql.Request(transaction);
+      const staffUsers = await staffReq.query(
+        "SELECT UserID FROM Users WHERE Role IN ('Admin', 'Staff')",
+      );
 
-    const notifyMsg = `Có món ăn mới: "${Title}" đang chờ bạn phê duyệt.`;
+      const notifyMsg = `Có món ăn mới: "${Title}" đang chờ bạn phê duyệt.`;
 
-    for (let staff of staffUsers.recordset) {
-      const notifyStaffReq = new mssql.Request(transaction);
-      await notifyStaffReq
-        .input("StaffID", mssql.Int, staff.UserID)
-        .input("Msg", mssql.NVarChar, notifyMsg).query(`
-                INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-                VALUES (@StaffID, @Msg, 'System', '/admin', 0, GETDATE())
-            `);
+      for (let staff of staffUsers.recordset) {
+        const notifyStaffReq = new mssql.Request(transaction);
+        await notifyStaffReq
+          .input("StaffID", mssql.Int, staff.UserID)
+          .input("Msg", mssql.NVarChar, notifyMsg).query(`
+                  INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
+                  VALUES (@StaffID, @Msg, 'System', '/admin', 0, GETDATE())
+              `);
+      }
     }
 
     await transaction.commit();
     res
       .status(201)
-      .json({ message: "Đăng công thức thành công, đang chờ duyệt!" });
+      .json({ 
+        message: finalDbStatus === "Approved" 
+          ? "Đăng công thức thành công!" 
+          : "Đăng công thức thành công, đang chờ duyệt!" 
+      });
+      
   } catch (err) {
     console.error("LỖI GỐC TỪ SQL:", err.message);
     try {
@@ -1533,7 +1560,7 @@ app.get("/api/categories", async (req, res) => {
 });
 
 // ==========================================
-// LẤY THÔNG TIN PROFILE & THỐNG KÊ (FOLLOW, LIKES)
+// LẤY THÔNG TIN PROFILE & THỐNG KÊ (FOLLOW, LIKE)
 // ==========================================
 app.get("/api/users/profile/:identifier", async (req, res) => {
   try {
