@@ -1646,9 +1646,19 @@ app.post("/api/users/follow", async (req, res) => {
       if (userRes.recordset.length > 0) {
         const follower = userRes.recordset[0];
         const msg = `${follower.FullName} đã bắt đầu theo dõi bạn.`;
-        await request.query(`
+        
+        // ĐÃ SỬA: Sửa lại đường link truy cập. 
+        // Thay chữ "/user/" thành route đúng bên React của bạn nếu bạn dùng tên khác (ví dụ "/profile/")
+        const notifyLink = `/user/${FollowerID}`; 
+
+        const notifyReq = new mssql.Request(pool);
+        await notifyReq
+          .input("TargetID", mssql.Int, TargetUserID)
+          .input("Message", mssql.NVarChar, msg)
+          .input("Link", mssql.VarChar, notifyLink)
+          .query(`
               INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-              VALUES (@TargetUserID, N'${msg}', 'Follow', '/${follower.Username}', 0, GETDATE())
+              VALUES (@TargetID, @Message, 'Follow', @Link, 0, GETDATE())
           `);
       }
 
@@ -1660,23 +1670,31 @@ app.post("/api/users/follow", async (req, res) => {
   }
 });
 
-// API KIỂM TRA TRẠNG THÁI FOLLOW
-app.get("/api/users/check-follow", async (req, res) => {
+// ==========================================
+// ĐÁNH DẤU THÔNG BÁO ĐÃ ĐỌC
+// ==========================================
+app.put("/api/notifications/read/:id", authenticateToken, async (req, res) => {
   try {
+    const { id } = req.params;
+
+    // Đảm bảo kết nối
     await poolConnect;
-    const { followerId, followeeId } = req.query;
+    
+    // Dùng pool.request() để có connection
+    const request = pool.request();
+    
+    const result = await request
+      .input("NotificationID", mssql.Int, id)
+      .query(`
+        UPDATE Notifications 
+        SET IsRead = 1 
+        WHERE NotificationID = @NotificationID
+      `);
 
-    const request = new mssql.Request(pool);
-    request.input("FollowerID", mssql.Int, followerId);
-    request.input("FolloweeID", mssql.Int, followeeId);
-
-    const result = await request.query(`
-      SELECT 1 FROM Follows WHERE FollowerID = @FollowerID AND FolloweeID = @FolloweeID
-    `);
-
-    res.json({ isFollowing: result.recordset.length > 0 });
-  } catch (error) {
-    res.status(500).json({ message: "Lỗi Server" });
+    res.status(200).json({ message: "Đã đánh dấu là đã đọc" });
+  } catch (err) {
+    console.error("Lỗi cập nhật 1 thông báo:", err);
+    res.status(500).json({ message: "Lỗi Server!" });
   }
 });
 
@@ -1719,6 +1737,29 @@ app.get("/api/users/:id/following", async (req, res) => {
     res.json(result.recordset);
   } catch (error) {
     res.status(500).json({ message: "Lỗi lấy danh sách Following" });
+  }
+});
+
+// ==========================================
+// API KIỂM TRA TRẠNG THÁI FOLLOW (Trị bệnh mất trí nhớ F5)
+// ==========================================
+app.get("/api/users/check-follow", async (req, res) => {
+  try {
+    await poolConnect;
+    const { followerId, followeeId } = req.query;
+
+    const request = new mssql.Request(pool);
+    request.input("FollowerID", mssql.Int, followerId);
+    request.input("FolloweeID", mssql.Int, followeeId);
+
+    const result = await request.query(`
+      SELECT 1 FROM Follows WHERE FollowerID = @FollowerID AND FolloweeID = @FolloweeID
+    `);
+
+    res.json({ isFollowing: result.recordset.length > 0 });
+  } catch (error) {
+    console.error("Lỗi kiểm tra follow:", error);
+    res.status(500).json({ message: "Lỗi Server" });
   }
 });
 
