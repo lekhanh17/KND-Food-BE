@@ -856,7 +856,7 @@ app.get("/api/recipes/featured", async (req, res) => {
     // Dùng INNER JOIN để loại bỏ hoàn toàn những món CHƯA CÓ ĐÁNH GIÁ
     // Sắp xếp theo AverageRating giảm dần (Top sao lên trước), nếu bằng sao thì ưu tiên ReviewCount nhiều hơn
     const result = await request.query(`
-      SELECT TOP 4 
+      SELECT TOP 10 
           r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
           r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
           c.AverageRating, c.ReviewCount
@@ -1671,7 +1671,7 @@ app.post("/api/users/follow", async (req, res) => {
 });
 
 // ==========================================
-// ĐÁNH DẤU THÔNG BÁO ĐÃ ĐỌC
+// API ĐÁNH DẤU THÔNG BÁO ĐÃ ĐỌC
 // ==========================================
 app.put("/api/notifications/read/:id", authenticateToken, async (req, res) => {
   try {
@@ -1741,7 +1741,7 @@ app.get("/api/users/:id/following", async (req, res) => {
 });
 
 // ==========================================
-// API KIỂM TRA TRẠNG THÁI FOLLOW (Trị bệnh mất trí nhớ F5)
+// API KIỂM TRA TRẠNG THÁI FOLLOW (fix lỗi ko hiện Đang theo dõi khi nhấn F5)
 // ==========================================
 app.get("/api/users/check-follow", async (req, res) => {
   try {
@@ -1762,6 +1762,8 @@ app.get("/api/users/check-follow", async (req, res) => {
     res.status(500).json({ message: "Lỗi Server" });
   }
 });
+
+
 
 // Khởi động Server
 const PORT = 5000;
