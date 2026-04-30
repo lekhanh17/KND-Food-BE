@@ -1219,22 +1219,26 @@ app.get("/api/comments/recipe/:recipeId", async (req, res) => {
 });
 
 // ==========================================
-// API ĐĂNG BÌNH LUẬN MỚI + GỬI THÔNG BÁO (CHỐNG SPAM)
+// API ĐĂNG BÌNH LUẬN MỚI (HỖ TRỢ TỐI ĐA 3 ẢNH) + GỬI THÔNG BÁO 
 // ==========================================
-app.post("/api/comments", authenticateToken, async (req, res) => {
+// SỬA: Đổi từ upload.single("Image") sang upload.array("Images", 3)
+app.post("/api/comments", authenticateToken, upload.array("Images", 3), async (req, res) => {
   const { RecipeID, Content, Rating } = req.body;
   const UserID = req.user.userId; // Lấy từ Token đã giải mã
 
   if (!Rating || Rating < 1 || Rating > 5) {
-    return res
-      .status(400)
-      .json({ message: "Vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" });
+    return res.status(400).json({ message: "Vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" });
   }
 
   if (!Content || Content.trim() === "") {
-    return res
-      .status(400)
-      .json({ message: "Nội dung bình luận không được để trống!" });
+    return res.status(400).json({ message: "Nội dung bình luận không được để trống!" });
+  }
+
+  // SỬA: XỬ LÝ MẢNG ẢNH (NẾU CÓ)
+  let ImageURL = null;
+  if (req.files && req.files.length > 0) {
+    // Lấy tất cả đường dẫn ảnh từ mảng req.files, nối lại bằng dấu phẩy
+    ImageURL = req.files.map(file => file.path).join(','); 
   }
 
   const transaction = new mssql.Transaction(pool);
@@ -1254,40 +1258,43 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
             `);
 
     if (checkSpamRes.recordset.length > 0) {
-      // Nếu đã từng đánh giá -> Báo lỗi
       await transaction.rollback();
       return res.status(400).json({
-        message:
-          "Bạn đã đánh giá món ăn này rồi. Mỗi tài khoản chỉ được đánh giá 1 lần!",
+        message: "Bạn đã đánh giá món ăn này rồi. Mỗi tài khoản chỉ được đánh giá 1 lần!",
       });
     }
-    // ====================================================
 
-    // Bước A: Chèn bình luận mới VÀO DB KÈM RATING
+    // ====================================================
+    // BƯỚC A: CHÈN BÌNH LUẬN VÀO DB (KÈM CHUỖI LINK ẢNH)
+    // ====================================================
     const commentReq = new mssql.Request(transaction);
     const resultComment = await commentReq
       .input("RecipeID", mssql.Int, RecipeID)
       .input("UserID", mssql.Int, UserID)
       .input("Content", mssql.NVarChar, Content)
-      .input("Rating", mssql.Int, Rating).query(`
-                INSERT INTO Comments (RecipeID, UserID, Content, Rating, CreatedAt)
+      .input("Rating", mssql.Int, Rating)
+      .input("ImageURL", mssql.NVarChar, ImageURL) // Thêm tham số ảnh (chuỗi cách nhau dấu phẩy)
+      .query(`
+                INSERT INTO Comments (RecipeID, UserID, Content, Rating, ImageURL, CreatedAt)
                 OUTPUT INSERTED.*
-                VALUES (@RecipeID, @UserID, @Content, @Rating, GETDATE())
+                VALUES (@RecipeID, @UserID, @Content, @Rating, @ImageURL, GETDATE())
             `);
 
     const newComment = resultComment.recordset[0];
 
-    // Bước B: Lấy thông tin User vừa bình luận (để trả về cho FE hiển thị ngay)
+    // ====================================================
+    // BƯỚC B: LẤY INFO USER
+    // ====================================================
     const userReq = new mssql.Request(transaction);
     const userResult = await userReq
       .input("UID", mssql.Int, UserID)
-      .query(
-        "SELECT FullName, Username, Avatar FROM Users WHERE UserID = @UID",
-      );
+      .query("SELECT FullName, Username, Avatar FROM Users WHERE UserID = @UID");
 
     const userInfo = userResult.recordset[0];
 
-    // Bước C: Gửi thông báo cho Tác Giả (Nếu người cmt ko phải tác giả)
+    // ====================================================
+    // BƯỚC C: GỬI THÔNG BÁO CHO TÁC GIẢ
+    // ====================================================
     const recipeReq = new mssql.Request(transaction);
     const recipeInfo = await recipeReq
       .input("RID", mssql.Int, RecipeID)
@@ -1298,7 +1305,8 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
     if (authorID !== UserID) {
       const notifyReq = new mssql.Request(transaction);
-      const notifyMsg = `${userInfo.FullName} đã đánh giá ${Rating} sao về món "${recipeTitle}" của bạn.`;
+      // Đổi chữ tí cho xôm: "đã gửi đánh giá kèm ảnh..."
+      const notifyMsg = `${userInfo.FullName} đã gửi đánh giá ${Rating} sao ${ImageURL ? '(kèm hình ảnh) ' : ''}về món "${recipeTitle}" của bạn.`;
 
       await notifyReq
         .input("TargetUID", mssql.Int, authorID)
@@ -1311,7 +1319,7 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
 
     await transaction.commit();
 
-    // Trả về dữ liệu gộp để Frontend update UI không cần load lại trang
+    // Trả về dữ liệu gộp
     res.status(201).json({
       ...newComment,
       FullName: userInfo.FullName,
@@ -1325,7 +1333,9 @@ app.post("/api/comments", authenticateToken, async (req, res) => {
   }
 });
 
-// API XÓA BÌNH LUẬN (Người viết hoặc Chủ bài đăng)
+// ==========================================
+// API XÓA BÌNH LUẬN (VẪN NHƯ CŨ)
+// ==========================================
 app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
   try {
     const { commentId } = req.params;
@@ -1348,6 +1358,7 @@ app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
     const { CommentOwner, RecipeAuthor } = checkReq.recordset[0];
 
     if (currentUserId === CommentOwner || currentUserId === RecipeAuthor) {
+      // NOTE: Tạm thời chỉ xóa Database, chưa cấu hình xóa file ảnh trên Cloudinary để đơn giản code
       await pool
         .request()
         .input("CID", mssql.Int, commentId)
@@ -1355,9 +1366,7 @@ app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
 
       return res.json({ message: "Đã xóa bình luận thành công!" });
     } else {
-      return res
-        .status(403)
-        .json({ message: "Bạn không có quyền xóa bình luận này!" });
+      return res.status(403).json({ message: "Bạn không có quyền xóa bình luận này!" });
     }
   } catch (err) {
     console.error("Lỗi xóa cmt:", err);
