@@ -882,7 +882,7 @@ app.get("/api/recipes/featured", async (req, res) => {
 });
 
 // ==========================================
-// API TÌM KIẾM NHANH (MÓN ĂN & NGƯỜI DÙNG)
+// API TÌM KIẾM NHANH (NÂNG CẤP TÁCH TỪ KHÓA)
 // ==========================================
 app.get("/api/search", async (req, res) => {
   try {
@@ -892,23 +892,54 @@ app.get("/api/search", async (req, res) => {
       return res.json({ recipes: [], users: [] });
     }
 
-    const sqlSearchTerm = `%${searchQuery}%`;
+    // 1. THUẬT TOÁN TÁCH TỪ KHÓA
+    // Cắt chuỗi theo dấu phẩy (vd: "bò, ớt chuông" -> ["bò", "ớt chuông"])
+    let terms = searchQuery.split(',').map(t => t.trim()).filter(t => t !== "");
+    
+    // Nếu người dùng gõ không có dấu phẩy (vd: "bò ớt chuông"), thì cắt theo khoảng trắng
+    if (terms.length === 1 && !searchQuery.includes(',')) {
+      terms = searchQuery.split(' ').map(t => t.trim()).filter(t => t !== "");
+    }
 
-    const recipesResult = await pool
-      .request()
-      .input("Term", sql.NVarChar, sqlSearchTerm).query(`
-        SELECT TOP 5 RecipeID, Title, ImageURL 
-        FROM Recipes 
-        WHERE Title LIKE @Term AND (Status = 'Approved' OR Status IS NULL)
-      `);
+    // Khởi tạo request riêng cho từng Query
+    const requestRecipes = pool.request();
+    const requestUsers = pool.request();
 
-    const usersResult = await pool
-      .request()
-      .input("Term", sql.NVarChar, sqlSearchTerm).query(`
-        SELECT TOP 3 UserID, Username, Avatar 
-        FROM Users 
-        WHERE Username LIKE @Term OR FullName LIKE @Term
-      `);
+    let recipeConditions = [];
+    let userConditions = [];
+
+    // 2. GẮN ĐIỀU KIỆN ĐỘNG CHO TỪNG TỪ KHÓA
+    terms.forEach((term, index) => {
+      const paramName = `term${index}`;
+      const paramValue = `%${term}%`;
+      
+      // Truyền biến an toàn chống SQL Injection
+      requestRecipes.input(paramName, sql.NVarChar, paramValue);
+      requestUsers.input(paramName, sql.NVarChar, paramValue);
+
+      // Yêu cầu tìm các món chứa ĐỒNG THỜI các từ khóa trong Tên món
+      recipeConditions.push(`Title LIKE @${paramName}`);
+      
+      // User thì tìm trong Username hoặc FullName
+      userConditions.push(`(Username LIKE @${paramName} OR FullName LIKE @${paramName})`);
+    });
+
+    // Nối các câu điều kiện lại bằng chữ AND
+    const recipeWhere = recipeConditions.join(" AND ");
+    const userWhere = userConditions.join(" AND ");
+
+    // 3. THỰC THI TRUY VẤN
+    const recipesResult = await requestRecipes.query(`
+      SELECT TOP 5 RecipeID, Title, ImageURL 
+      FROM Recipes 
+      WHERE (${recipeWhere}) AND (Status = 'Approved' OR Status IS NULL)
+    `);
+
+    const usersResult = await requestUsers.query(`
+      SELECT TOP 3 UserID, Username, Avatar 
+      FROM Users 
+      WHERE ${userWhere}
+    `);
 
     res.status(200).json({
       recipes: recipesResult.recordset,
