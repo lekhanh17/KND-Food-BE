@@ -67,10 +67,10 @@ const isAdmin = (req, res, next) => {
 
 // 1. Cấu hình DB
 const config = {
-  user: "sa",
-  password: "Luxxie29@",
-  server: "YUNGLUXX",
-  database: "KNDFOOD",
+  user: process.env.DB_USER || "sa",
+  password: process.env.DB_PASSWORD || "Luxxie290@",
+  server: process.env.DB_SERVER || "YUNGLUXX",
+  database: process.env.DB_NAME || "KNDFOOD",
   options: {
     encrypt: false,
     trustServerCertificate: true,
@@ -512,7 +512,7 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
     // TỰ ĐỘNG CHECK QUYỀN TỪ DATABASE
     // ==========================================
     let finalDbStatus = "Pending"; // Mặc định ai đăng cũng là chờ duyệt
-    
+
     // Gọi DB xem user này role gì
     const checkRoleReq = new mssql.Request(transaction);
     const roleResult = await checkRoleReq
@@ -600,14 +600,12 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
     }
 
     await transaction.commit();
-    res
-      .status(201)
-      .json({ 
-        message: finalDbStatus === "Approved" 
-          ? "Đăng công thức thành công!" 
-          : "Đăng công thức thành công, đang chờ duyệt!" 
-      });
-      
+    res.status(201).json({
+      message:
+        finalDbStatus === "Approved"
+          ? "Đăng công thức thành công!"
+          : "Đăng công thức thành công, đang chờ duyệt!",
+    });
   } catch (err) {
     console.error("LỖI GỐC TỪ SQL:", err.message);
     try {
@@ -894,11 +892,17 @@ app.get("/api/search", async (req, res) => {
 
     // 1. THUẬT TOÁN TÁCH TỪ KHÓA
     // Cắt chuỗi theo dấu phẩy (vd: "bò, ớt chuông" -> ["bò", "ớt chuông"])
-    let terms = searchQuery.split(',').map(t => t.trim()).filter(t => t !== "");
-    
+    let terms = searchQuery
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t !== "");
+
     // Nếu người dùng gõ không có dấu phẩy (vd: "bò ớt chuông"), thì cắt theo khoảng trắng
-    if (terms.length === 1 && !searchQuery.includes(',')) {
-      terms = searchQuery.split(' ').map(t => t.trim()).filter(t => t !== "");
+    if (terms.length === 1 && !searchQuery.includes(",")) {
+      terms = searchQuery
+        .split(" ")
+        .map((t) => t.trim())
+        .filter((t) => t !== "");
     }
 
     // Khởi tạo request riêng cho từng Query
@@ -912,16 +916,18 @@ app.get("/api/search", async (req, res) => {
     terms.forEach((term, index) => {
       const paramName = `term${index}`;
       const paramValue = `%${term}%`;
-      
+
       // Truyền biến an toàn chống SQL Injection
       requestRecipes.input(paramName, sql.NVarChar, paramValue);
       requestUsers.input(paramName, sql.NVarChar, paramValue);
 
       // Yêu cầu tìm các món chứa ĐỒNG THỜI các từ khóa trong Tên món
       recipeConditions.push(`Title LIKE @${paramName}`);
-      
+
       // User thì tìm trong Username hoặc FullName
-      userConditions.push(`(Username LIKE @${paramName} OR FullName LIKE @${paramName})`);
+      userConditions.push(
+        `(Username LIKE @${paramName} OR FullName LIKE @${paramName})`,
+      );
     });
 
     // Nối các câu điều kiện lại bằng chữ AND
@@ -1219,119 +1225,131 @@ app.get("/api/comments/recipe/:recipeId", async (req, res) => {
 });
 
 // ==========================================
-// API ĐĂNG BÌNH LUẬN MỚI (HỖ TRỢ TỐI ĐA 3 ẢNH) + GỬI THÔNG BÁO 
+// API ĐĂNG BÌNH LUẬN MỚI (HỖ TRỢ TỐI ĐA 3 ẢNH) + GỬI THÔNG BÁO
 // ==========================================
 // SỬA: Đổi từ upload.single("Image") sang upload.array("Images", 3)
-app.post("/api/comments", authenticateToken, upload.array("Images", 3), async (req, res) => {
-  const { RecipeID, Content, Rating } = req.body;
-  const UserID = req.user.userId; // Lấy từ Token đã giải mã
+app.post(
+  "/api/comments",
+  authenticateToken,
+  upload.array("Images", 3),
+  async (req, res) => {
+    const { RecipeID, Content, Rating } = req.body;
+    const UserID = req.user.userId; // Lấy từ Token đã giải mã
 
-  if (!Rating || Rating < 1 || Rating > 5) {
-    return res.status(400).json({ message: "Vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" });
-  }
+    if (!Rating || Rating < 1 || Rating > 5) {
+      return res
+        .status(400)
+        .json({ message: "Vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" });
+    }
 
-  if (!Content || Content.trim() === "") {
-    return res.status(400).json({ message: "Nội dung bình luận không được để trống!" });
-  }
+    if (!Content || Content.trim() === "") {
+      return res
+        .status(400)
+        .json({ message: "Nội dung bình luận không được để trống!" });
+    }
 
-  // SỬA: XỬ LÝ MẢNG ẢNH (NẾU CÓ)
-  let ImageURL = null;
-  if (req.files && req.files.length > 0) {
-    // Lấy tất cả đường dẫn ảnh từ mảng req.files, nối lại bằng dấu phẩy
-    ImageURL = req.files.map(file => file.path).join(','); 
-  }
+    // SỬA: XỬ LÝ MẢNG ẢNH (NẾU CÓ)
+    let ImageURL = null;
+    if (req.files && req.files.length > 0) {
+      // Lấy tất cả đường dẫn ảnh từ mảng req.files, nối lại bằng dấu phẩy
+      ImageURL = req.files.map((file) => file.path).join(",");
+    }
 
-  const transaction = new mssql.Transaction(pool);
-  try {
-    await poolConnect;
-    await transaction.begin();
+    const transaction = new mssql.Transaction(pool);
+    try {
+      await poolConnect;
+      await transaction.begin();
 
-    // ====================================================
-    // KIỂM TRA XEM TÀI KHOẢN ĐÃ ĐÁNH GIÁ CHƯA
-    // ====================================================
-    const checkSpamReq = new mssql.Request(transaction);
-    const checkSpamRes = await checkSpamReq
-      .input("CheckRecipeID", mssql.Int, RecipeID)
-      .input("CheckUserID", mssql.Int, UserID).query(`
+      // ====================================================
+      // KIỂM TRA XEM TÀI KHOẢN ĐÃ ĐÁNH GIÁ CHƯA
+      // ====================================================
+      const checkSpamReq = new mssql.Request(transaction);
+      const checkSpamRes = await checkSpamReq
+        .input("CheckRecipeID", mssql.Int, RecipeID)
+        .input("CheckUserID", mssql.Int, UserID).query(`
                 SELECT CommentID FROM Comments 
                 WHERE RecipeID = @CheckRecipeID AND UserID = @CheckUserID
             `);
 
-    if (checkSpamRes.recordset.length > 0) {
-      await transaction.rollback();
-      return res.status(400).json({
-        message: "Bạn đã đánh giá món ăn này rồi. Mỗi tài khoản chỉ được đánh giá 1 lần!",
-      });
-    }
+      if (checkSpamRes.recordset.length > 0) {
+        await transaction.rollback();
+        return res.status(400).json({
+          message:
+            "Bạn đã đánh giá món ăn này rồi. Mỗi tài khoản chỉ được đánh giá 1 lần!",
+        });
+      }
 
-    // ====================================================
-    // BƯỚC A: CHÈN BÌNH LUẬN VÀO DB (KÈM CHUỖI LINK ẢNH)
-    // ====================================================
-    const commentReq = new mssql.Request(transaction);
-    const resultComment = await commentReq
-      .input("RecipeID", mssql.Int, RecipeID)
-      .input("UserID", mssql.Int, UserID)
-      .input("Content", mssql.NVarChar, Content)
-      .input("Rating", mssql.Int, Rating)
-      .input("ImageURL", mssql.NVarChar, ImageURL) // Thêm tham số ảnh (chuỗi cách nhau dấu phẩy)
-      .query(`
+      // ====================================================
+      // BƯỚC A: CHÈN BÌNH LUẬN VÀO DB (KÈM CHUỖI LINK ẢNH)
+      // ====================================================
+      const commentReq = new mssql.Request(transaction);
+      const resultComment = await commentReq
+        .input("RecipeID", mssql.Int, RecipeID)
+        .input("UserID", mssql.Int, UserID)
+        .input("Content", mssql.NVarChar, Content)
+        .input("Rating", mssql.Int, Rating)
+        .input("ImageURL", mssql.NVarChar, ImageURL) // Thêm tham số ảnh (chuỗi cách nhau dấu phẩy)
+        .query(`
                 INSERT INTO Comments (RecipeID, UserID, Content, Rating, ImageURL, CreatedAt)
                 OUTPUT INSERTED.*
                 VALUES (@RecipeID, @UserID, @Content, @Rating, @ImageURL, GETDATE())
             `);
 
-    const newComment = resultComment.recordset[0];
+      const newComment = resultComment.recordset[0];
 
-    // ====================================================
-    // BƯỚC B: LẤY INFO USER
-    // ====================================================
-    const userReq = new mssql.Request(transaction);
-    const userResult = await userReq
-      .input("UID", mssql.Int, UserID)
-      .query("SELECT FullName, Username, Avatar FROM Users WHERE UserID = @UID");
+      // ====================================================
+      // BƯỚC B: LẤY INFO USER
+      // ====================================================
+      const userReq = new mssql.Request(transaction);
+      const userResult = await userReq
+        .input("UID", mssql.Int, UserID)
+        .query(
+          "SELECT FullName, Username, Avatar FROM Users WHERE UserID = @UID",
+        );
 
-    const userInfo = userResult.recordset[0];
+      const userInfo = userResult.recordset[0];
 
-    // ====================================================
-    // BƯỚC C: GỬI THÔNG BÁO CHO TÁC GIẢ
-    // ====================================================
-    const recipeReq = new mssql.Request(transaction);
-    const recipeInfo = await recipeReq
-      .input("RID", mssql.Int, RecipeID)
-      .query("SELECT UserID, Title FROM Recipes WHERE RecipeID = @RID");
+      // ====================================================
+      // BƯỚC C: GỬI THÔNG BÁO CHO TÁC GIẢ
+      // ====================================================
+      const recipeReq = new mssql.Request(transaction);
+      const recipeInfo = await recipeReq
+        .input("RID", mssql.Int, RecipeID)
+        .query("SELECT UserID, Title FROM Recipes WHERE RecipeID = @RID");
 
-    const authorID = recipeInfo.recordset[0].UserID;
-    const recipeTitle = recipeInfo.recordset[0].Title;
+      const authorID = recipeInfo.recordset[0].UserID;
+      const recipeTitle = recipeInfo.recordset[0].Title;
 
-    if (authorID !== UserID) {
-      const notifyReq = new mssql.Request(transaction);
-      // Đổi chữ tí cho xôm: "đã gửi đánh giá kèm ảnh..."
-      const notifyMsg = `${userInfo.FullName} đã gửi đánh giá ${Rating} sao ${ImageURL ? '(kèm hình ảnh) ' : ''}về món "${recipeTitle}" của bạn.`;
+      if (authorID !== UserID) {
+        const notifyReq = new mssql.Request(transaction);
+        // Đổi chữ tí cho xôm: "đã gửi đánh giá kèm ảnh..."
+        const notifyMsg = `${userInfo.FullName} đã gửi đánh giá ${Rating} sao ${ImageURL ? "(kèm hình ảnh) " : ""}về món "${recipeTitle}" của bạn.`;
 
-      await notifyReq
-        .input("TargetUID", mssql.Int, authorID)
-        .input("Msg", mssql.NVarChar, notifyMsg)
-        .input("Link", mssql.NVarChar, `/recipe/${RecipeID}`).query(`
+        await notifyReq
+          .input("TargetUID", mssql.Int, authorID)
+          .input("Msg", mssql.NVarChar, notifyMsg)
+          .input("Link", mssql.NVarChar, `/recipe/${RecipeID}`).query(`
                     INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
                     VALUES (@TargetUID, @Msg, 'Comment', @Link, 0, GETDATE())
                 `);
+      }
+
+      await transaction.commit();
+
+      // Trả về dữ liệu gộp
+      res.status(201).json({
+        ...newComment,
+        FullName: userInfo.FullName,
+        Username: userInfo.Username,
+        Avatar: userInfo.Avatar,
+      });
+    } catch (err) {
+      if (transaction) await transaction.rollback();
+      console.error("Lỗi đăng bình luận:", err);
+      res.status(500).json({ message: "Lỗi Server không thể gửi bình luận!" });
     }
-
-    await transaction.commit();
-
-    // Trả về dữ liệu gộp
-    res.status(201).json({
-      ...newComment,
-      FullName: userInfo.FullName,
-      Username: userInfo.Username,
-      Avatar: userInfo.Avatar,
-    });
-  } catch (err) {
-    if (transaction) await transaction.rollback();
-    console.error("Lỗi đăng bình luận:", err);
-    res.status(500).json({ message: "Lỗi Server không thể gửi bình luận!" });
-  }
-});
+  },
+);
 
 // ==========================================
 // API XÓA BÌNH LUẬN (VẪN NHƯ CŨ)
@@ -1366,7 +1384,9 @@ app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
 
       return res.json({ message: "Đã xóa bình luận thành công!" });
     } else {
-      return res.status(403).json({ message: "Bạn không có quyền xóa bình luận này!" });
+      return res
+        .status(403)
+        .json({ message: "Bạn không có quyền xóa bình luận này!" });
     }
   } catch (err) {
     console.error("Lỗi xóa cmt:", err);
@@ -1686,17 +1706,16 @@ app.post("/api/users/follow", async (req, res) => {
       if (userRes.recordset.length > 0) {
         const follower = userRes.recordset[0];
         const msg = `${follower.FullName} đã bắt đầu theo dõi bạn.`;
-        
-        // ĐÃ SỬA: Sửa lại đường link truy cập. 
+
+        // ĐÃ SỬA: Sửa lại đường link truy cập.
         // Thay chữ "/user/" thành route đúng bên React của bạn nếu bạn dùng tên khác (ví dụ "/profile/")
-        const notifyLink = `/user/${FollowerID}`; 
+        const notifyLink = `/user/${FollowerID}`;
 
         const notifyReq = new mssql.Request(pool);
         await notifyReq
           .input("TargetID", mssql.Int, TargetUserID)
           .input("Message", mssql.NVarChar, msg)
-          .input("Link", mssql.VarChar, notifyLink)
-          .query(`
+          .input("Link", mssql.VarChar, notifyLink).query(`
               INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
               VALUES (@TargetID, @Message, 'Follow', @Link, 0, GETDATE())
           `);
@@ -1719,13 +1738,11 @@ app.put("/api/notifications/read/:id", authenticateToken, async (req, res) => {
 
     // Đảm bảo kết nối
     await poolConnect;
-    
+
     // Dùng pool.request() để có connection
     const request = pool.request();
-    
-    const result = await request
-      .input("NotificationID", mssql.Int, id)
-      .query(`
+
+    const result = await request.input("NotificationID", mssql.Int, id).query(`
         UPDATE Notifications 
         SET IsRead = 1 
         WHERE NotificationID = @NotificationID
@@ -1802,8 +1819,6 @@ app.get("/api/users/check-follow", async (req, res) => {
     res.status(500).json({ message: "Lỗi Server" });
   }
 });
-
-
 
 // Khởi động Server
 const PORT = 5000;
