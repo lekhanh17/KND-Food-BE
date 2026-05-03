@@ -28,7 +28,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-const path = require('path');
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // ==========================================
 // BỘ MIDDLEWARE PHÂN QUYỀN
