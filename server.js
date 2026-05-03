@@ -68,7 +68,7 @@ const isAdmin = (req, res, next) => {
 // 1. Cấu hình DB
 const config = {
   user: process.env.DB_USER || "sa",
-  password: process.env.DB_PASSWORD || "Luxxie290@",
+  password: process.env.DB_PASSWORD || "Luxxie29@",
   server: process.env.DB_SERVER || "YUNGLUXX",
   database: process.env.DB_NAME || "KNDFOOD",
   options: {
