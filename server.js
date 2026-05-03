@@ -647,8 +647,11 @@ app.get("/api/recipes", async (req, res) => {
 
     res.status(200).json(result.recordset);
   } catch (err) {
-    console.error("Lỗi lấy danh sách món ăn:", err);
-    res.status(500).json({ message: "Lỗi Server!" });
+    console.error("Lỗi lấy danh sách món ăn:", err); 
+    res.status(500).json({ 
+        message: "Lỗi Server!", 
+        loi_chi_tiet: err.message 
+    });
   }
 });
 
