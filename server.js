@@ -28,7 +28,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // ==========================================
 // BỘ MIDDLEWARE PHÂN QUYỀN
 // ==========================================
@@ -647,10 +647,10 @@ app.get("/api/recipes", async (req, res) => {
 
     res.status(200).json(result.recordset);
   } catch (err) {
-    console.error("Lỗi lấy danh sách món ăn:", err); 
-    res.status(500).json({ 
-        message: "Lỗi Server!", 
-        loi_chi_tiet: err.message 
+    console.error("Lỗi lấy danh sách món ăn:", err);
+    res.status(500).json({
+      message: "Lỗi Server!",
+      loi_chi_tiet: err.message,
     });
   }
 });
@@ -1563,14 +1563,17 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
     });
 
     // Thay thế link localhost bằng link AI trên Render
-    const pythonResponse = await fetch("https://knd-food-ai.onrender.com/api/recommend", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        target_recipe_id: targetRecipeId,
-        all_recipes: allRecipes,
-      }),
-    });
+    const pythonResponse = await fetch(
+      "https://knd-food-ai.onrender.com/api/recommend",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_recipe_id: targetRecipeId,
+          all_recipes: allRecipes,
+        }),
+      },
+    );
 
     const pythonData = await pythonResponse.json();
     const recommendedIds = pythonData.recommended_ids;
@@ -1602,7 +1605,8 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
     res.status(200).json(sortedFinalResult);
   } catch (err) {
     console.error("Lỗi Hệ thống AI Recommend:", err);
-    res.status(500).json({ message: "Lỗi Server!" });
+    // TRẢ VỀ LỖI CHI TIẾT RA F12 ĐỂ XEM
+    res.status(500).json({ message: "Lỗi Server!", detail: err.message });
   }
 });
 
