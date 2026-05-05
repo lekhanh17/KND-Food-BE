@@ -1562,7 +1562,8 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
       };
     });
 
-    const pythonResponse = await fetch("http://localhost:8000/api/recommend", {
+    // Thay thế link localhost bằng link AI trên Render
+    const pythonResponse = await fetch("https://knd-food-ai.onrender.com/api/recommend", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
