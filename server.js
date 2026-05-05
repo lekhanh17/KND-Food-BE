@@ -1562,7 +1562,6 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
       };
     });
 
-    // Thay thế link localhost bằng link AI trên Render
     const pythonResponse = await fetch(
       "https://knd-food-ai.onrender.com/api/recommend",
       {
@@ -1574,6 +1573,16 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
         }),
       },
     );
+
+    // 🛑 LỚP KHIÊN BẢO VỆ: Kiểm tra xem AI trả về cái gì
+    const contentType = pythonResponse.headers.get("content-type") || "";
+    if (!pythonResponse.ok || !contentType.includes("application/json")) {
+      const errorHtml = await pythonResponse.text();
+      console.error("AI KHÔNG TRẢ VỀ JSON! Trạng thái:", pythonResponse.status);
+      console.error("Nội dung HTML:", errorHtml.substring(0, 200)); // In 200 chữ đầu để bắt bệnh
+      // Trả về mảng rỗng để Frontend không bị sập (sẽ hiện "AI đang học hỏi")
+      return res.status(200).json([]);
+    }
 
     const pythonData = await pythonResponse.json();
     const recommendedIds = pythonData.recommended_ids;
@@ -1605,8 +1614,7 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
     res.status(200).json(sortedFinalResult);
   } catch (err) {
     console.error("Lỗi Hệ thống AI Recommend:", err);
-    // TRẢ VỀ LỖI CHI TIẾT RA F12 ĐỂ XEM
-    res.status(500).json({ message: "Lỗi Server!", detail: err.message });
+    res.status(500).json({ message: "Lỗi Server!" });
   }
 });
 
