@@ -1,34 +1,68 @@
-const express = require("express");
-const mssql = require("mssql");
-const cors = require("cors");
+// ==============================================================================
+// PHẦN 1: NẠP CHÌA KHÓA VÀ THƯ VIỆN (PHẢI NẰM TRÊN CÙNG)
+// ==============================================================================
 require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const sql = require("mssql");
+const mssql = require("mssql");
 const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
-const sql = require("mssql");
-const jwt = require("jsonwebtoken");
+const path = require("path"); // <--- Dời thằng path lên đây cho chuẩn bài
 
-const app = express();
-app.use(express.json());
-app.use(cors());
-
-// Thêm avt
+// Thư viện Upload ảnh Cloudinary
 const multer = require("multer");
-const path = require("path");
+const cloudinary = require("cloudinary").v2;
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
 
-app.use("/uploads", express.static("uploads"));
+// ==============================================================================
+// PHẦN 2: CẤU HÌNH CLOUDINARY & MULTER
+// ==============================================================================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, "uploads/");
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname));
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "KND_Food_Images", // Thư mục cất ảnh trên mây
+    // allowedFormats: ["jpg", "jpeg", "png", "webp", "gif"], // Giữ nguyên comment này để chống lỗi văng game
   },
 });
+
+// KHỞI TẠO BIẾN UPLOAD DUY NHẤT CHO TOÀN BỘ SERVER
 const upload = multer({ storage: storage });
 
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// ==============================================================================
+// PHẦN 3: CẤU HÌNH APP & KẾT NỐI DATABASE SOMEE
+// ==============================================================================
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+const dbConfig = {
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  server: process.env.DB_SERVER,
+  database: process.env.DB_DATABASE,
+  options: {
+    encrypt: false,
+    trustServerCertificate: true,
+  },
+};
+
+const pool = new sql.ConnectionPool(dbConfig);
+const poolConnect = pool.connect();
+
+poolConnect
+  .then(() => console.log("Đã kết nối thành công tới SQL Server!"))
+  .catch((err) => console.error("Lỗi kết nối Database:", err));
+
 // ==========================================
 // BỘ MIDDLEWARE PHÂN QUYỀN
 // ==========================================
@@ -78,12 +112,6 @@ const config = {
   },
   port: 1433,
 };
-
-const pool = new mssql.ConnectionPool(config);
-const poolConnect = pool
-  .connect()
-  .then(() => console.log("Đã kết nối thành công tới SQL Server!"))
-  .catch((err) => console.error("Lỗi kết nối Database: ", err));
 
 // ==========================================
 // API DÀNH CHO REACT
@@ -471,7 +499,7 @@ app.post("/api/reset-password", async (req, res) => {
 });
 
 // ==========================================
-// API TẠO CÔNG THỨC MỚI (CÓ THÔNG BÁO CHO ADMIN/STAFF)
+// API TẠO CÔNG THỨC MỚI (CÓ THÔNG BÁO CHO ADMIN/STAFF) - ĐÃ ĐỘ CLOUDINARY
 // ==========================================
 app.post("/api/recipes/create", upload.any(), async (req, res) => {
   const transaction = new mssql.Transaction(pool);
@@ -495,26 +523,21 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
     const ingredients = JSON.parse(req.body.ingredients);
     const stepsDescriptions = JSON.parse(req.body.stepsDescriptions);
 
+    // 🛠️ LẤY LINK ẢNH TỪ CLOUDINARY
     const mainImageFile = req.files.find((f) => f.fieldname === "mainImage");
-    const mainImageUrl = mainImageFile
-      ? `http://localhost:5000/uploads/${mainImageFile.filename}`
-      : null;
+    const mainImageUrl = mainImageFile ? mainImageFile.path : null;
 
     let finalVideoUrl = null;
     const mainVideoFile = req.files.find((f) => f.fieldname === "mainVideo");
 
     if (mainVideoFile) {
-      finalVideoUrl = `http://localhost:5000/uploads/${mainVideoFile.filename}`;
+      finalVideoUrl = mainVideoFile.path;
     } else if (VideoUrl && VideoUrl.trim() !== "") {
       finalVideoUrl = VideoUrl.trim();
     }
 
-    // ==========================================
-    // TỰ ĐỘNG CHECK QUYỀN TỪ DATABASE
-    // ==========================================
-    let finalDbStatus = "Pending"; // Mặc định ai đăng cũng là chờ duyệt
-
-    // Gọi DB xem user này role gì
+    // CHECK QUYỀN
+    let finalDbStatus = "Pending";
     const checkRoleReq = new mssql.Request(transaction);
     const roleResult = await checkRoleReq
       .input("CheckUID", mssql.Int, UserID)
@@ -522,33 +545,33 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
 
     if (roleResult.recordset.length > 0) {
       const userRole = roleResult.recordset[0].Role;
-      // Nếu là Admin hoặc Staff thì tự động duyệt bài
       if (userRole === "Admin" || userRole === "Staff") {
         finalDbStatus = "Approved";
       }
     }
-    // ==========================================
 
+    // LƯU CÔNG THỨC CHÍNH
     const request = new mssql.Request(transaction);
     const resultRecipe = await request
       .input("UserID", mssql.Int, UserID)
       .input("CategoryID", mssql.Int, CategoryID)
       .input("Title", mssql.NVarChar, Title)
       .input("Description", mssql.NVarChar, Description)
-      .input("ImageURL", mssql.NVarChar, mainImageUrl)
+      .input("ImageURL", mssql.NVarChar, mainImageUrl) // Lưu link mây
       .input("VideoURL", mssql.NVarChar, finalVideoUrl)
       .input("PrepTime", mssql.Int, PrepTime || 0)
       .input("CookTime", mssql.Int, CookTime || 0)
       .input("Servings", mssql.Int, Servings || 1)
       .input("Difficulty", mssql.NVarChar, Difficulty)
       .input("Status", mssql.NVarChar, finalDbStatus).query(`
-                INSERT INTO Recipes (UserID, CategoryID, Title, Description, ImageURL, VideoURL, PrepTime, CookTime, Servings, Difficulty, Status)
-                OUTPUT INSERTED.RecipeID
-                VALUES (@UserID, @CategoryID, @Title, @Description, @ImageURL, @VideoURL, @PrepTime, @CookTime, @Servings, @Difficulty, @Status)
-            `);
+          INSERT INTO Recipes (UserID, CategoryID, Title, Description, ImageURL, VideoURL, PrepTime, CookTime, Servings, Difficulty, Status)
+          OUTPUT INSERTED.RecipeID
+          VALUES (@UserID, @CategoryID, @Title, @Description, @ImageURL, @VideoURL, @PrepTime, @CookTime, @Servings, @Difficulty, @Status)
+      `);
 
     const newRecipeId = resultRecipe.recordset[0].RecipeID;
 
+    // LƯU THÀNH PHẦN
     for (let ing of ingredients) {
       const reqIng = new mssql.Request(transaction);
       await reqIng
@@ -556,16 +579,15 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
         .input("IngredientName", mssql.NVarChar, ing.name)
         .input("Quantity", mssql.NVarChar, ing.amount)
         .input("Unit", mssql.NVarChar, ing.unit).query(`
-                    INSERT INTO Ingredients (RecipeID, IngredientName, Quantity, Unit)
-                    VALUES (@RecipeID, @IngredientName, @Quantity, @Unit)
-                `);
+            INSERT INTO Ingredients (RecipeID, IngredientName, Quantity, Unit)
+            VALUES (@RecipeID, @IngredientName, @Quantity, @Unit)
+        `);
     }
 
+    // LƯU ẢNH TỪNG BƯỚC LÊN CLOUDINARY
     for (let i = 0; i < stepsDescriptions.length; i++) {
       const stepFile = req.files.find((f) => f.fieldname === `stepImage_${i}`);
-      const stepImageUrl = stepFile
-        ? `http://localhost:5000/uploads/${stepFile.filename}`
-        : null;
+      const stepImageUrl = stepFile ? stepFile.path : null;
 
       const reqStep = new mssql.Request(transaction);
       await reqStep
@@ -573,14 +595,12 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
         .input("StepNumber", mssql.Int, i + 1)
         .input("Instruction", mssql.NVarChar, stepsDescriptions[i])
         .input("ImageURL", mssql.NVarChar, stepImageUrl).query(`
-                    INSERT INTO RecipeSteps (RecipeID, StepNumber, Instruction, ImageURL)
-                    VALUES (@RecipeID, @StepNumber, @Instruction, @ImageURL)
-                `);
+            INSERT INTO RecipeSteps (RecipeID, StepNumber, Instruction, ImageURL)
+            VALUES (@RecipeID, @StepNumber, @Instruction, @ImageURL)
+        `);
     }
 
-    // ==================================================
-    // CHỈ THÔNG BÁO NẾU BÀI VIẾT LÀ PENDING
-    // ==================================================
+    // THÔNG BÁO CHO ADMIN
     if (finalDbStatus === "Pending") {
       const staffReq = new mssql.Request(transaction);
       const staffUsers = await staffReq.query(
@@ -588,15 +608,14 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
       );
 
       const notifyMsg = `Có món ăn mới: "${Title}" đang chờ bạn phê duyệt.`;
-
       for (let staff of staffUsers.recordset) {
         const notifyStaffReq = new mssql.Request(transaction);
         await notifyStaffReq
           .input("StaffID", mssql.Int, staff.UserID)
           .input("Msg", mssql.NVarChar, notifyMsg).query(`
-                  INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-                  VALUES (@StaffID, @Msg, 'System', '/admin', 0, GETDATE())
-              `);
+              INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
+              VALUES (@StaffID, @Msg, 'System', '/admin', 0, GETDATE())
+          `);
       }
     }
 
@@ -612,7 +631,6 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
     try {
       await transaction.rollback();
     } catch (rollbackErr) {}
-
     res.status(500).json({ message: "Lỗi Server: " + err.message });
   }
 });
@@ -1837,8 +1855,10 @@ app.get("/api/users/check-follow", async (req, res) => {
   }
 });
 
-// Khởi động Server
-const PORT = 5000;
+// ==============================================================================
+// KHỞI ĐỘNG SERVER
+// ==============================================================================
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server đang chạy tại: http://localhost:${PORT}`);
 });
