@@ -403,43 +403,42 @@ app.post("/api/forgot-password", async (req, res) => {
 
     const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}&email=${Email}`;
 
-// Cấu hình transporter cho Gmail SMTP (IPV4)    
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true, // true cho port 465, false cho port 587
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
+    const htmlContent = `
+      <div style='font-family: Arial, sans-serif; padding: 20px; color: #333;'>
+        <h2 style='color: #f97316;'>Xin chào!</h2>
+        <p>Bạn vừa yêu cầu đặt lại mật khẩu cho tài khoản tại Website KND Food.</p>
+        <p>Vui lòng click vào nút bên dưới để tạo mật khẩu mới. Liên kết này chỉ có hiệu lực trong vòng <b>15 phút</b>.</p>
+        <br/>
+        <a href='${resetLink}' style='display: inline-block; padding: 12px 24px; background-color: #f97316; color: white; text-decoration: none; border-radius: 8px; font-weight: bold;'>
+          Đổi Mật Khẩu
+        </a>
+        <br/><br/>
+        <p>Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này.</p>
+        <hr style='border: 1px solid #eee; margin: 20px 0;'/>
+        <p style='font-size: 12px; color: #777;'>Trân trọng!<br/>Đội ngũ CSKH KND Food</p>
+      </div>
+    `;
+
+    // Gọi sang trạm trung chuyển của Google để gửi mail (Bypass Render)
+    const response = await fetch(process.env.GOOGLE_SCRIPT_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json", // <--- Thêm cái vé thông hành này
       },
-      // Thêm dòng này phòng Render bắt bẻ chứng chỉ SSL (Secure Sockets Layer)
-      tls: {
-        rejectUnauthorized: false,
-      },
+      body: JSON.stringify({
+        to: Email,
+        subject: "[KND Food] Yêu cầu đặt lại mật khẩu",
+        html: htmlContent,
+      }),
     });
 
-    const mailOptions = {
-      from: '"CSKH KND Food" <lekhanhlux29@gmail.com>',
-      to: Email,
-      subject: "[KND Food] Yêu cầu đặt lại mật khẩu",
-      html: `
-        <div style='font-family: Arial, sans-serif; padding: 20px; color: #333;'>
-          <h2 style='color: #f97316;'>Xin chào!</h2>
-          <p>Bạn vừa yêu cầu đặt lại mật khẩu cho tài khoản tại Website KND Food.</p>
-          <p>Vui lòng click vào nút bên dưới để tạo mật khẩu mới. Liên kết này chỉ có hiệu lực trong vòng <b>15 phút</b>.</p>
-          <br/>
-          <a href='${resetLink}' style='display: inline-block; padding: 12px 24px; background-color: #f97316; color: white; text-decoration: none; border-radius: 8px; font-weight: bold;'>
-            Đổi Mật Khẩu
-          </a>
-          <br/><br/>
-          <p>Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này.</p>
-          <hr style='border: 1px solid #eee; margin: 20px 0;'/>
-          <p style='font-size: 12px; color: #777;'>Trân trọng!<br/>Đội ngũ CSKH KND Food</p>
-        </div>
-      `,
-    };
+    // Bắt lỗi chi tiết xem Google chửi gì
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Chi tiết lỗi từ Google:", errorText); 
+      throw new Error("Lỗi khi kết nối với trạm trung chuyển Google.");
+    }
 
-    await transporter.sendMail(mailOptions);
     res.status(200).json({ message: "Liên kết đặt lại mật khẩu đã được gửi!" });
   } catch (error) {
     console.error("Lỗi API Quên mật khẩu:", error);
