@@ -100,18 +100,7 @@ const isAdmin = (req, res, next) => {
   }
 };
 
-// 1. Cấu hình DB
-const config = {
-  user: process.env.DB_USER || "sa",
-  password: process.env.DB_PASSWORD || "Luxxie29@",
-  server: process.env.DB_SERVER || "YUNGLUXX",
-  database: process.env.DB_NAME || "KNDFOOD",
-  options: {
-    encrypt: false,
-    trustServerCertificate: true,
-  },
-  port: 1433,
-};
+
 
 // ==========================================
 // API DÀNH CHO REACT
@@ -360,7 +349,7 @@ app.post(
         return res.status(400).json({ message: "Vui lòng chọn một ảnh!" });
       }
 
-      const avatarUrl = `http://localhost:5000/uploads/${req.file.filename}`;
+      const avatarUrl = req.file.path;
 
       await poolConnect;
       await pool
@@ -414,13 +403,13 @@ app.post("/api/forgot-password", async (req, res) => {
         WHERE Email = @Email
       `);
 
-    const resetLink = `http://localhost:5173/reset-password?token=${token}&email=${Email}`;
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}&email=${Email}`;
 
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
         user: "lekhanhlux29@gmail.com",
-        pass: "fzkrdfkqkvyobtkh",
+        pass: process.env.EMAIL_PASS,
       },
     });
 
@@ -1489,10 +1478,15 @@ app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
         if (AuthorID !== UserID) {
           // Không tự thông báo cho chính mình
           const msg = `${FullName} đã lưu công thức "${Title}" của bạn vào danh sách yêu thích.`;
-          await request.query(`
-                        INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-                        VALUES (${AuthorID}, N'${msg}', 'Favorite', '/recipe/${RecipeID}', 0, GETDATE())
-                    `);
+const notifyReq = new mssql.Request(pool); // Tạo request mới để gắn input cho an toàn
+await notifyReq
+  .input("AuthorID", mssql.Int, AuthorID)
+  .input("Msg", mssql.NVarChar, msg)
+  .input("RecipeID", mssql.Int, RecipeID)
+  .query(`
+    INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
+    VALUES (@AuthorID, @Msg, 'Favorite', '/recipe/@RecipeID', 0, GETDATE())
+  `);
         }
       }
 
@@ -1744,16 +1738,16 @@ app.post("/api/users/follow", async (req, res) => {
 
         // ĐÃ SỬA: Sửa lại đường link truy cập.
         // Thay chữ "/user/" thành route đúng bên React của bạn nếu bạn dùng tên khác (ví dụ "/profile/")
-        const notifyLink = `/user/${FollowerID}`;
-
-        const notifyReq = new mssql.Request(pool);
-        await notifyReq
-          .input("TargetID", mssql.Int, TargetUserID)
-          .input("Message", mssql.NVarChar, msg)
-          .input("Link", mssql.VarChar, notifyLink).query(`
-              INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-              VALUES (@TargetID, @Message, 'Follow', @Link, 0, GETDATE())
-          `);
+        const notifyLink = `/recipe/${RecipeID}`;
+const notifyReq = new mssql.Request(pool); 
+await notifyReq
+  .input("AuthorID", mssql.Int, AuthorID)
+  .input("Msg", mssql.NVarChar, msg)
+  .input("Link", mssql.VarChar, notifyLink)
+  .query(`
+    INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
+    VALUES (@AuthorID, @Msg, 'Favorite', @Link, 0, GETDATE())
+  `);
       }
 
       res.json({ isFollowing: true, message: "Đã bắt đầu theo dõi" });
