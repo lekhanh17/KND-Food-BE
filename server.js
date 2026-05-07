@@ -1121,24 +1121,47 @@ app.delete("/api/recipes/delete/:id", authenticateToken, async (req, res) => {
         throw new Error("Bạn không có quyền xóa bài của người khác!");
       }
 
+      // 1. Xóa thông báo liên quan đến món ăn này (dựa vào đường link)
+      const deleteNotifReq = new mssql.Request(transaction);
+      await deleteNotifReq
+        .input("Link", mssql.NVarChar, `/recipe/${recipeId}`)
+        .query("DELETE FROM Notifications WHERE Link = @Link");
+
+      // 2. Xóa khỏi bảng Danh sách yêu thích (Favorites)
+      const deleteFavReq = new mssql.Request(transaction);
+      await deleteFavReq
+        .input("RecipeID", mssql.Int, recipeId)
+        .query("DELETE FROM Favorites WHERE RecipeID = @RecipeID");
+
+      // 3. Xóa các bình luận (Comments) của món ăn
+      const deleteCmtReq = new mssql.Request(transaction);
+      await deleteCmtReq
+        .input("RecipeID", mssql.Int, recipeId)
+        .query("DELETE FROM Comments WHERE RecipeID = @RecipeID");
+
+      // 4. Xóa nguyên liệu (Ingredients)
       const deleteIngReq = new mssql.Request(transaction);
       await deleteIngReq
         .input("RecipeID", mssql.Int, recipeId)
         .query("DELETE FROM Ingredients WHERE RecipeID = @RecipeID");
 
+      // 5. Xóa các bước nấu (RecipeSteps)
       const deleteStepReq = new mssql.Request(transaction);
       await deleteStepReq
         .input("RecipeID", mssql.Int, recipeId)
         .query("DELETE FROM RecipeSteps WHERE RecipeID = @RecipeID");
 
+      // 6. Xóa món ăn (Recipes) - BƯỚC CUỐI CÙNG
       const deleteRecipeReq = new mssql.Request(transaction);
       await deleteRecipeReq
         .input("RecipeID", mssql.Int, recipeId)
         .query("DELETE FROM Recipes WHERE RecipeID = @RecipeID");
 
+      // Nếu tất cả các lệnh DELETE đều trót lọt thì mới lưu thay đổi
       await transaction.commit();
       res.status(200).json({ message: "Đã xóa công thức thành công!" });
     } catch (error) {
+      // Nếu có bất kỳ lỗi nào xảy ra ở trên, lập tức hủy bỏ mọi lệnh đã chạy
       await transaction.rollback();
       res.status(403).json({ message: error.message });
     }
