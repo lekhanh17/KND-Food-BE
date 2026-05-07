@@ -100,8 +100,6 @@ const isAdmin = (req, res, next) => {
   }
 };
 
-
-
 // ==========================================
 // API DÀNH CHO REACT
 // ==========================================
@@ -405,11 +403,18 @@ app.post("/api/forgot-password", async (req, res) => {
 
     const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}&email=${Email}`;
 
+// Cấu hình transporter cho Gmail SMTP (IPV4)    
     const transporter = nodemailer.createTransport({
-      service: "gmail",
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true, // true cho port 465, false cho port 587
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
+      },
+      // Thêm dòng này phòng Render bắt bẻ chứng chỉ SSL (Secure Sockets Layer)
+      tls: {
+        rejectUnauthorized: false,
       },
     });
 
@@ -1501,12 +1506,11 @@ app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
         if (AuthorID !== UserID) {
           // Không tự thông báo cho chính mình
           const msg = `${FullName} đã lưu công thức "${Title}" của bạn vào danh sách yêu thích.`;
-const notifyReq = new mssql.Request(pool); // Tạo request mới để gắn input cho an toàn
-await notifyReq
-  .input("AuthorID", mssql.Int, AuthorID)
-  .input("Msg", mssql.NVarChar, msg)
-  .input("RecipeID", mssql.Int, RecipeID)
-  .query(`
+          const notifyReq = new mssql.Request(pool); // Tạo request mới để gắn input cho an toàn
+          await notifyReq
+            .input("AuthorID", mssql.Int, AuthorID)
+            .input("Msg", mssql.NVarChar, msg)
+            .input("RecipeID", mssql.Int, RecipeID).query(`
     INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
     VALUES (@AuthorID, @Msg, 'Favorite', '/recipe/@RecipeID', 0, GETDATE())
   `);
@@ -1762,12 +1766,11 @@ app.post("/api/users/follow", async (req, res) => {
         // ĐÃ SỬA: Sửa lại đường link truy cập.
         // Thay chữ "/user/" thành route đúng bên React của bạn nếu bạn dùng tên khác (ví dụ "/profile/")
         const notifyLink = `/recipe/${RecipeID}`;
-const notifyReq = new mssql.Request(pool); 
-await notifyReq
-  .input("AuthorID", mssql.Int, AuthorID)
-  .input("Msg", mssql.NVarChar, msg)
-  .input("Link", mssql.VarChar, notifyLink)
-  .query(`
+        const notifyReq = new mssql.Request(pool);
+        await notifyReq
+          .input("AuthorID", mssql.Int, AuthorID)
+          .input("Msg", mssql.NVarChar, msg)
+          .input("Link", mssql.VarChar, notifyLink).query(`
     INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
     VALUES (@AuthorID, @Msg, 'Favorite', @Link, 0, GETDATE())
   `);
