@@ -391,13 +391,14 @@ app.post("/api/forgot-password", async (req, res) => {
 
     const token = crypto.randomBytes(32).toString("hex");
 
+    // ĐÃ SỬA: Chuyển sang giờ Việt Nam (UTC + 7) rồi mới cộng thêm 15 phút
     await pool
       .request()
       .input("Token", sql.NVarChar, token)
       .input("Email", sql.NVarChar, Email).query(`
         UPDATE Users 
         SET ResetPasswordToken = @Token, 
-            ResetTokenExpiry = DATEADD(minute, 15, GETDATE()) 
+            ResetTokenExpiry = DATEADD(minute, 15, DATEADD(hour, 7, GETUTCDATE())) 
         WHERE Email = @Email
       `);
 
@@ -423,7 +424,7 @@ app.post("/api/forgot-password", async (req, res) => {
     const response = await fetch(process.env.GOOGLE_SCRIPT_URL, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json", // <--- Thêm cái vé thông hành này
+        "Content-Type": "application/json", 
       },
       body: JSON.stringify({
         to: Email,
@@ -454,6 +455,7 @@ app.post("/api/reset-password", async (req, res) => {
       return res.status(400).json({ message: "Thiếu thông tin bắt buộc!" });
     }
 
+    // So sánh thời hạn với giờ Việt Nam hiện tại (UTC + 7)
     const checkResult = await pool
       .request()
       .input("Email", sql.NVarChar, email)
@@ -461,7 +463,7 @@ app.post("/api/reset-password", async (req, res) => {
         SELECT * FROM Users 
         WHERE Email = @Email 
           AND ResetPasswordToken = @Token 
-          AND ResetTokenExpiry > GETDATE()
+          AND ResetTokenExpiry > DATEADD(hour, 7, GETUTCDATE())
       `);
 
     if (checkResult.recordset.length === 0) {
@@ -607,7 +609,7 @@ app.post("/api/recipes/create", upload.any(), async (req, res) => {
           .input("StaffID", mssql.Int, staff.UserID)
           .input("Msg", mssql.NVarChar, notifyMsg).query(`
               INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-              VALUES (@StaffID, @Msg, 'System', '/admin', 0, GETDATE())
+              VALUES (@StaffID, @Msg, 'System', '/admin', 0, DATEADD(hour, 7, GETUTCDATE()))
           `);
       }
     }
@@ -782,7 +784,7 @@ app.put("/api/recipes/update/:id", async (req, res) => {
                 UPDATE Recipes 
                 SET Title = @Title, Description = @Description, PrepTime = @PrepTime, 
                     CookTime = @CookTime, Servings = @Servings, Difficulty = @Difficulty, 
-                    CategoryID = @CategoryID, UpdatedAt = GETDATE()
+                    CategoryID = @CategoryID, UpdatedAt = DATEADD(hour, 7, GETUTCDATE())
                 WHERE RecipeID = @RecipeID
             `);
 
@@ -1035,7 +1037,7 @@ app.put(
         .input("Type", mssql.VarChar, "Approve")
         .input("Link", mssql.VarChar, `/recipe/${id}`).query(`
                 INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-                VALUES (@UserID, @Message, @Type, @Link, 0, GETDATE())
+                VALUES (@UserID, @Message, @Type, @Link, 0, DATEADD(hour, 7, GETUTCDATE()))
             `);
 
       await transaction.commit();
@@ -1074,7 +1076,7 @@ app.delete(
           .input("Message", mssql.NVarChar, msg)
           .input("Type", mssql.VarChar, "Reject").query(`
                     INSERT INTO Notifications (UserID, Message, Type, IsRead, CreatedAt)
-                    VALUES (@UserID, @Message, @Type, 0, GETDATE())
+                    VALUES (@UserID, @Message, @Type, 0, DATEADD(hour, 7, GETUTCDATE()))
                 `);
       }
 
@@ -1330,7 +1332,7 @@ app.post(
         .query(`
                 INSERT INTO Comments (RecipeID, UserID, Content, Rating, ImageURL, CreatedAt)
                 OUTPUT INSERTED.*
-                VALUES (@RecipeID, @UserID, @Content, @Rating, @ImageURL, GETDATE())
+                VALUES (@RecipeID, @UserID, @Content, @Rating, @ImageURL, DATEADD(hour, 7, GETUTCDATE()))
             `);
 
       const newComment = resultComment.recordset[0];
@@ -1368,7 +1370,7 @@ app.post(
           .input("Msg", mssql.NVarChar, notifyMsg)
           .input("Link", mssql.NVarChar, `/recipe/${RecipeID}`).query(`
                     INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-                    VALUES (@TargetUID, @Msg, 'Comment', @Link, 0, GETDATE())
+                    VALUES (@TargetUID, @Msg, 'Comment', @Link, 0, DATEADD(hour, 7, GETUTCDATE()))
                 `);
       }
 
@@ -1489,7 +1491,7 @@ app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
     } else {
       // Nếu chưa có -> lưu (Thêm vào Favorites)
       await request.query(
-        "INSERT INTO Favorites (UserID, RecipeID, CreatedAt) VALUES (@UserID, @RecipeID, GETDATE())",
+        "INSERT INTO Favorites (UserID, RecipeID, CreatedAt) VALUES (@UserID, @RecipeID, DATEADD(hour, 7, GETUTCDATE()))",
       );
 
       // ====================================================
@@ -1511,7 +1513,7 @@ app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
             .input("Msg", mssql.NVarChar, msg)
             .input("RecipeID", mssql.Int, RecipeID).query(`
     INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-    VALUES (@AuthorID, @Msg, 'Favorite', '/recipe/@RecipeID', 0, GETDATE())
+    VALUES (@AuthorID, @Msg, 'Favorite', '/recipe/@RecipeID', 0, DATEADD(hour, 7, GETUTCDATE()))
   `);
         }
       }
@@ -1716,7 +1718,7 @@ app.get("/api/users/profile/:identifier", async (req, res) => {
 });
 
 // ==========================================
-// FOLLOW / UNFOLLOW NGƯỜI DÙNG KÈM THÔNG BÁO
+// API FOLLOW / UNFOLLOW NGƯỜI DÙNG KÈM THÔNG BÁO
 // ==========================================
 app.post("/api/users/follow", async (req, res) => {
   try {
@@ -1753,7 +1755,7 @@ app.post("/api/users/follow", async (req, res) => {
       `);
 
       // ====================================================
-      // GỬI THÔNG BÁO CHO NGƯỜI ĐƯỢC FOLLOW
+      // GỬI THÔNG BÁO CHO NGƯỜI ĐƯỢC FOLLOW (ĐÃ FIX CHUẨN)
       // ====================================================
       const userRes = await request.query(
         `SELECT FullName, Username FROM Users WHERE UserID = @FollowerID`,
@@ -1762,17 +1764,17 @@ app.post("/api/users/follow", async (req, res) => {
         const follower = userRes.recordset[0];
         const msg = `${follower.FullName} đã bắt đầu theo dõi bạn.`;
 
-        // ĐÃ SỬA: Sửa lại đường link truy cập.
-        // Thay chữ "/user/" thành route đúng bên React của bạn nếu bạn dùng tên khác (ví dụ "/profile/")
-        const notifyLink = `/recipe/${RecipeID}`;
+        // ĐÃ SỬA: Link dẫn về trang cá nhân của người vừa bấm Follow
+        const notifyLink = `/profile/${FollowerID}`; 
+        
         const notifyReq = new mssql.Request(pool);
         await notifyReq
-          .input("AuthorID", mssql.Int, AuthorID)
+          .input("TargetUserID", mssql.Int, TargetUserID) 
           .input("Msg", mssql.NVarChar, msg)
           .input("Link", mssql.VarChar, notifyLink).query(`
-    INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-    VALUES (@AuthorID, @Msg, 'Favorite', @Link, 0, GETDATE())
-  `);
+            INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
+            VALUES (@TargetUserID, @Msg, 'Follow', @Link, 0, DATEADD(hour, 7, GETUTCDATE()))
+          `);
       }
 
       res.json({ isFollowing: true, message: "Đã bắt đầu theo dõi" });
