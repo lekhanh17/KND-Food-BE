@@ -107,26 +107,50 @@ const isAdmin = (req, res, next) => {
 // API Đăng ký tài khoản mới
 app.post("/api/register", async (req, res) => {
   try {
-    const { FullName, Email, Password } = req.body;
+    // ĐÃ SỬA: Lấy thêm Username từ req.body
+    const { FullName, Email, Password, Username } = req.body;
+    
+    await poolConnect;
+
+    // 1. Kiểm tra xem Username đã tồn tại chưa
+    const checkUsername = await pool.request()
+      .input("Username", mssql.VarChar, Username)
+      .query("SELECT UserID FROM Users WHERE Username = @Username");
+      
+    if (checkUsername.recordset.length > 0) {
+      return res.status(400).json({ message: "ID người dùng này đã tồn tại, vui lòng chọn ID khác!" });
+    }
+
+    // 2. Kiểm tra xem Email đã tồn tại chưa
+    const checkEmail = await pool.request()
+      .input("Email", mssql.VarChar, Email)
+      .query("SELECT UserID FROM Users WHERE Email = @Email");
+      
+    if (checkEmail.recordset.length > 0) {
+      return res.status(400).json({ message: "Email này đã được sử dụng!" });
+    }
+
+    // 3. Hash mật khẩu và Lưu vào Database
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(Password, saltRounds);
 
-    await poolConnect;
     await pool
       .request()
       .input("FullName", mssql.NVarChar, FullName)
       .input("Email", mssql.VarChar, Email)
+      .input("Username", mssql.VarChar, Username) // ĐÃ SỬA: Truyền Username vào
       .input("PasswordHash", mssql.VarChar, hashedPassword)
       .input("Role", mssql.VarChar, "User").query(`
-                INSERT INTO Users (FullName, Email, PasswordHash, Role) 
-                VALUES (@FullName, @Email, @PasswordHash, @Role)
+                INSERT INTO Users (FullName, Email, Username, PasswordHash, Role) 
+                VALUES (@FullName, @Email, @Username, @PasswordHash, @Role)
             `);
 
     res.status(201).json({ message: "Đăng ký thành công!" });
   } catch (err) {
     console.error("Lỗi đăng ký: ", err);
+    // Vẫn giữ lại catch 2627 phòng hờ các rủi ro Unique khác ở Database
     if (err.number === 2627) {
-      return res.status(400).json({ message: "Email này đã được sử dụng!" });
+      return res.status(400).json({ message: "Thông tin đăng ký (Email hoặc ID) đã tồn tại!" });
     }
     res.status(500).json({ message: "Lỗi Server" });
   }
@@ -152,20 +176,23 @@ app.get("/api/users", authenticateToken, isAdminOrStaff, async (req, res) => {
 // API ĐĂNG NHẬP TK
 app.post("/api/login", async (req, res) => {
   try {
-    const { Email, Password } = req.body;
+    // ĐÃ SỬA: Hứng 'identifier' từ Frontend gửi lên (có thể là Email hoặc ID)
+    const { identifier, Password } = req.body;
     await poolConnect;
 
     const result = await pool
       .request()
-      .input("Email", mssql.VarChar, Email)
-      .query("SELECT * FROM Users WHERE Email = @Email");
+      .input("Identifier", mssql.VarChar, identifier)
+      // ĐÃ SỬA: Tìm kiếm user có Email HOẶC Username khớp với identifier khách nhập
+      .query("SELECT * FROM Users WHERE Email = @Identifier OR Username = @Identifier");
 
     const user = result.recordset[0];
 
     if (!user) {
       return res
         .status(400)
-        .json({ message: "Email hoặc Mật khẩu không chính xác!" });
+        // ĐÃ SỬA: Sửa lại câu báo lỗi cho chuẩn xác với giao diện mới
+        .json({ message: "Email, ID người dùng hoặc Mật khẩu không chính xác!" });
     }
 
     const isMatch = await bcrypt.compare(Password, user.PasswordHash);
@@ -173,7 +200,7 @@ app.post("/api/login", async (req, res) => {
     if (!isMatch) {
       return res
         .status(400)
-        .json({ message: "Email hoặc Mật khẩu không chính xác!" });
+        .json({ message: "Email, ID người dùng hoặc Mật khẩu không chính xác!" });
     }
 
     const token = jwt.sign(
