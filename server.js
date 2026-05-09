@@ -735,7 +735,8 @@ app.get("/api/recipes", async (req, res) => {
         r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
         r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
         ISNULL(c.AverageRating, 0) AS AverageRating,
-        ISNULL(c.ReviewCount, 0) AS ReviewCount
+        ISNULL(c.ReviewCount, 0) AS ReviewCount,
+        r.ViewCount
     FROM Recipes r
     LEFT JOIN Users u ON r.UserID = u.UserID
     LEFT JOIN (
@@ -770,7 +771,7 @@ app.get("/api/recipes/user/:userId", async (req, res) => {
     request.input("UserID", mssql.Int, req.params.userId);
 
     const result = await request.query(`
-            SELECT RecipeID, Title, ImageURL, Difficulty, PrepTime, CookTime, Status 
+            SELECT RecipeID, Title, ImageURL, Difficulty, PrepTime, CookTime, Status, ViewCount 
             FROM Recipes 
             WHERE UserID = @UserID 
             ORDER BY RecipeID DESC
@@ -961,12 +962,11 @@ app.get("/api/recipes/featured", async (req, res) => {
     const request = new mssql.Request(pool);
 
     // Dùng INNER JOIN để loại bỏ hoàn toàn những món CHƯA CÓ ĐÁNH GIÁ
-    // Sắp xếp theo AverageRating giảm dần (Top sao lên trước), nếu bằng sao thì ưu tiên ReviewCount nhiều hơn
     const result = await request.query(`
       SELECT TOP 10 
           r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
           r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
-          c.AverageRating, c.ReviewCount
+          c.AverageRating, c.ReviewCount, r.ViewCount
       FROM Recipes r
       LEFT JOIN Users u ON r.UserID = u.UserID
       INNER JOIN (
@@ -1654,6 +1654,26 @@ app.get("/api/favorites/my-favorites", authenticateToken, async (req, res) => {
   } catch (err) {
     console.error("Lỗi lấy danh sách yêu thích:", err);
     res.status(500).json({ message: "Lỗi Server!" });
+  }
+});
+
+// ==========================================
+// API TĂNG LƯỢT XEM CÔNG THỨC (ViewCount)
+// ==========================================
+app.put("/api/recipes/:id/view", async (req, res) => {
+  try {
+    const recipeId = req.params.id;
+    await poolConnect;
+
+    await pool.request()
+      .input("RecipeID", mssql.Int, recipeId)
+      // Tăng cột ViewCount lên 1
+      .query("UPDATE Recipes SET ViewCount = ViewCount + 1 WHERE RecipeID = @RecipeID");
+
+    res.status(200).json({ message: "Đã tăng 1 lượt xem!" });
+  } catch (err) {
+    console.error("Lỗi tăng view: ", err);
+    res.status(500).json({ message: "Lỗi Server" });
   }
 });
 
