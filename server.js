@@ -331,13 +331,35 @@ app.put(
 );
 
 // ==========================================
-// API CẬP NHẬT THÔNG TIN CÁ NHÂN
+// API CẬP NHẬT THÔNG TIN CÁ NHÂN (ĐÃ THÊM CHỐNG TRÙNG ID & EMAIL)
 // ==========================================
 app.put("/api/users/update", async (req, res) => {
   try {
     const { UserID, FullName, Email, Username, Bio } = req.body;
     await poolConnect;
 
+    // 1. KIỂM TRA CHỐNG TRÙNG LẶP ID (USERNAME)
+    // Loại trừ chính UserID của người đang sửa ra để họ giữ nguyên ID cũ không bị báo lỗi
+    const checkUsername = await pool.request()
+      .input("Username", mssql.VarChar, Username)
+      .input("UserID", mssql.Int, UserID)
+      .query("SELECT UserID FROM Users WHERE Username = @Username AND UserID != @UserID");
+
+    if (checkUsername.recordset.length > 0) {
+      return res.status(400).json({ message: "ID người dùng này đã có người sử dụng. Vui lòng chọn ID khác!" });
+    }
+
+    // 2. KIỂM TRA CHỐNG TRÙNG LẶP EMAIL (Phòng hờ nếu sếp cho phép đổi Email)
+    const checkEmail = await pool.request()
+      .input("Email", mssql.VarChar, Email)
+      .input("UserID", mssql.Int, UserID)
+      .query("SELECT UserID FROM Users WHERE Email = @Email AND UserID != @UserID");
+
+    if (checkEmail.recordset.length > 0) {
+      return res.status(400).json({ message: "Email này đã được sử dụng. Vui lòng dùng Email khác!" });
+    }
+
+    // 3. VƯỢT QUA HẾT CÁC BÀI KIỂM TRA -> CẬP NHẬT VÀO DATABASE
     await pool
       .request()
       .input("UserID", mssql.Int, UserID)
@@ -356,6 +378,10 @@ app.put("/api/users/update", async (req, res) => {
     res.json({ message: "Cập nhật thành công!" });
   } catch (err) {
     console.error(err);
+    // Bắt lỗi Unique Constraint của SQL Server phòng hờ
+    if (err.number === 2627) {
+      return res.status(400).json({ message: "Thông tin (ID hoặc Email) đã tồn tại trong hệ thống!" });
+    }
     res.status(500).json({ message: "Lỗi Server khi cập nhật hồ sơ" });
   }
 });
