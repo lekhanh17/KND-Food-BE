@@ -234,21 +234,60 @@ app.delete("/api/users/:id", authenticateToken, isAdmin, async (req, res) => {
     const userId = req.params.id;
     await poolConnect;
 
-    const result = await pool
-      .request()
-      .input("UserID", mssql.Int, userId)
-      .query("DELETE FROM Users WHERE UserID = @UserID");
+    // Bắt đầu một Transaction (Giao dịch) để đảm bảo an toàn dữ liệu
+    const transaction = new mssql.Transaction(pool);
+    await transaction.begin();
 
-    if (result.rowsAffected[0] === 0) {
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy người dùng này để xóa!" });
+    try {
+      const request = transaction.request();
+      request.input("UserID", mssql.Int, userId);
+
+      // 1. Dọn rác bảng Follows (Xóa các lượt họ đi follow và người khác follow họ)
+      // Dùng IF OBJECT_ID để lỡ sếp đặt tên bảng khác thì nó bỏ qua, không bị crash App
+      await request.query(`
+        IF OBJECT_ID('Follows', 'U') IS NOT NULL 
+        DELETE FROM Follows WHERE FollowerID = @UserID OR TargetUserID = @UserID
+      `);
+
+      // 2. Dọn rác bảng Favorites (Xóa các món ăn họ đã lưu)
+      await request.query(`
+        IF OBJECT_ID('Favorites', 'U') IS NOT NULL 
+        DELETE FROM Favorites WHERE UserID = @UserID
+      `);
+
+      // 3. Dọn rác bảng Reviews (Xóa các đánh giá họ đã viết)
+      await request.query(`
+        IF OBJECT_ID('Reviews', 'U') IS NOT NULL 
+        DELETE FROM Reviews WHERE UserID = @UserID
+      `);
+
+      // 4. Dọn rác bảng Recipes (Xóa các công thức họ đã đăng)
+      await request.query(`
+        IF OBJECT_ID('Recipes', 'U') IS NOT NULL 
+        DELETE FROM Recipes WHERE UserID = @UserID
+      `);
+
+      // 5. CUỐI CÙNG: Dọn sạch sẽ rồi mới được phép xóa User
+      const result = await request.query("DELETE FROM Users WHERE UserID = @UserID");
+
+      if (result.rowsAffected[0] === 0) {
+        await transaction.rollback(); // Hoàn tác
+        return res.status(404).json({ message: "Không tìm thấy người dùng này để xóa!" });
+      }
+
+      // Xóa trót lọt từ trên xuống dưới -> Chốt đơn!
+      await transaction.commit();
+      res.json({ message: "Đã xóa người dùng và toàn bộ dữ liệu liên quan!" });
+
+    } catch (dbError) {
+      // Có lỗi giữa chừng (ví dụ vướng thêm khóa ngoại khác) -> Hoàn tác mọi thứ
+      await transaction.rollback();
+      throw dbError; 
     }
 
-    res.json({ message: "Đã xóa người dùng thành công!" });
   } catch (err) {
     console.error("Lỗi khi xóa User: ", err);
-    res.status(500).json({ message: "Lỗi Server không thể xóa!" });
+    res.status(500).json({ message: "Lỗi vướng dữ liệu liên kết. Hãy kiểm tra lại SQL Server!" });
   }
 });
 
