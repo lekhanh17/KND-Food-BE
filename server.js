@@ -1143,9 +1143,9 @@ app.put(
 );
 
 // ==========================================
-// 3. TỪ CHỐI BÀI (Cập nhật Status, Lưu Lý do & Gửi Thông báo)
+// 3. TỪ CHỐI BÀI (Gửi thông báo kèm lý do -> Xóa sạch)
 // ==========================================
-app.put(
+app.delete(
   "/api/admin/reject-recipe/:id",
   authenticateToken,
   isAdminOrStaff,
@@ -1166,18 +1166,9 @@ app.put(
       if (infoResult.recordset.length > 0) {
         const { UserID, Title } = infoResult.recordset[0];
         
-        // BƯỚC 1: Đổi trạng thái bài viết thành Rejected và lưu Lý do vào cột RejectReason trong Recipes
-        const updateReq = new mssql.Request(transaction);
-        await updateReq
-          .input("RecipeID", mssql.Int, id)
-          .input("RejectReason", mssql.NVarChar, reason || "Không phù hợp tiêu chuẩn nội dung")
-          .query(
-            "UPDATE Recipes SET Status = 'Rejected', RejectReason = @RejectReason WHERE RecipeID = @RecipeID"
-          );
-
-        // BƯỚC 2: Gửi thông báo kèm LÝ DO cho khách hàng
+        // BƯỚC 1: Gửi thông báo kèm LÝ DO cho khách hàng trước khi xóa
         const notifyReq = new mssql.Request(transaction);
-        const msg = `Rất tiếc! Bài đăng "${Title}" đã bị từ chối. Lý do: ${reason || "Không phù hợp tiêu chuẩn"}`;
+        const msg = `Rất tiếc! Bài đăng "${Title}" đã bị từ chối và bị xóa khỏi hệ thống. Lý do: ${reason || "Không phù hợp tiêu chuẩn"}`;
         
         await notifyReq
           .input("UserID", mssql.Int, UserID)
@@ -1188,8 +1179,21 @@ app.put(
                 `);
       }
 
+      // BƯỚC 2: Vung kiếm trảm sạch sẽ khỏi Database
+      await new mssql.Request(transaction)
+        .input("RID", mssql.Int, id)
+        .query("DELETE FROM Ingredients WHERE RecipeID = @RID");
+      
+      await new mssql.Request(transaction)
+        .input("RID", mssql.Int, id)
+        .query("DELETE FROM RecipeSteps WHERE RecipeID = @RID");
+        
+      await new mssql.Request(transaction)
+        .input("RID", mssql.Int, id)
+        .query("DELETE FROM Recipes WHERE RecipeID = @RID");
+
       await transaction.commit();
-      res.json({ message: "Đã từ chối bài viết!" });
+      res.json({ message: "Đã từ chối, xóa bài và gửi thông báo cho tác giả!" });
     } catch (err) {
       await transaction.rollback();
       console.error("Lỗi từ chối bài:", err);
