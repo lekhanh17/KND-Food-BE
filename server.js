@@ -1142,8 +1142,10 @@ app.put(
   },
 );
 
-// 3. Từ chối bài (Gửi thông báo trước khi Xóa)
-app.delete(
+// ==========================================
+// 3. TỪ CHỐI BÀI (Cập nhật Status, Lưu Lý do & Gửi Thông báo)
+// ==========================================
+app.put(
   "/api/admin/reject-recipe/:id",
   authenticateToken,
   isAdminOrStaff,
@@ -1151,6 +1153,8 @@ app.delete(
     const transaction = new mssql.Transaction(pool);
     try {
       const { id } = req.params;
+      const { reason } = req.body; // Bắt lấy cái Lý do từ chối (reason) gửi từ Frontend lên
+      
       await poolConnect;
       await transaction.begin();
 
@@ -1161,8 +1165,20 @@ app.delete(
 
       if (infoResult.recordset.length > 0) {
         const { UserID, Title } = infoResult.recordset[0];
+        
+        // BƯỚC 1: Đổi trạng thái bài viết thành Rejected và lưu Lý do vào cột RejectReason trong Recipes
+        const updateReq = new mssql.Request(transaction);
+        await updateReq
+          .input("RecipeID", mssql.Int, id)
+          .input("RejectReason", mssql.NVarChar, reason || "Không phù hợp tiêu chuẩn nội dung")
+          .query(
+            "UPDATE Recipes SET Status = 'Rejected', RejectReason = @RejectReason WHERE RecipeID = @RecipeID"
+          );
+
+        // BƯỚC 2: Gửi thông báo kèm LÝ DO cho khách hàng
         const notifyReq = new mssql.Request(transaction);
-        const msg = `Rất tiếc! Bài đăng "${Title}" đã bị từ chối do không phù hợp với tiêu chuẩn nội dung.`;
+        const msg = `Rất tiếc! Bài đăng "${Title}" đã bị từ chối. Lý do: ${reason || "Không phù hợp tiêu chuẩn"}`;
+        
         await notifyReq
           .input("UserID", mssql.Int, UserID)
           .input("Message", mssql.NVarChar, msg)
@@ -1172,20 +1188,11 @@ app.delete(
                 `);
       }
 
-      await new mssql.Request(transaction)
-        .input("RID", mssql.Int, id)
-        .query("DELETE FROM Ingredients WHERE RecipeID = @RID");
-      await new mssql.Request(transaction)
-        .input("RID", mssql.Int, id)
-        .query("DELETE FROM RecipeSteps WHERE RecipeID = @RID");
-      await new mssql.Request(transaction)
-        .input("RID", mssql.Int, id)
-        .query("DELETE FROM Recipes WHERE RecipeID = @RID");
-
       await transaction.commit();
-      res.json({ message: "Đã từ chối bài viết và thông báo tới người dùng!" });
+      res.json({ message: "Đã từ chối bài viết!" });
     } catch (err) {
       await transaction.rollback();
+      console.error("Lỗi từ chối bài:", err);
       res.status(500).json({ message: "Lỗi Server!" });
     }
   },
