@@ -1644,6 +1644,7 @@ app.get("/api/favorites/my-favorites", authenticateToken, async (req, res) => {
                 SELECT 
                     r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
                     r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
+                    ISNULL(r.ViewCount, 0) AS ViewCount, -- ĐÃ THÊM: Lấy lượt xem ở đây nè sếp
                     ISNULL(c.AverageRating, 0) AS AverageRating,
                     ISNULL(c.ReviewCount, 0) AS ReviewCount
                 FROM Favorites f
