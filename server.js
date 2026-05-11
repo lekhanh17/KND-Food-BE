@@ -1051,7 +1051,7 @@ app.get("/api/search", async (req, res) => {
     `);
 
     const usersResult = await requestUsers.query(`
-      SELECT TOP 3 UserID, Username, Avatar 
+      SELECT TOP 3 UserID, Username, FullName, Avatar
       FROM Users 
       WHERE ${userWhere}
     `);
@@ -1610,14 +1610,19 @@ app.post("/api/favorites/toggle", authenticateToken, async (req, res) => {
         if (AuthorID !== UserID) {
           // Không tự thông báo cho chính mình
           const msg = `${FullName} đã lưu công thức "${Title}" của bạn vào danh sách yêu thích.`;
-          const notifyReq = new mssql.Request(pool); // Tạo request mới để gắn input cho an toàn
+          
+          // Ghép link chuẩn bằng JS
+          const link = `/recipe/${RecipeID}`; 
+
+          const notifyReq = new mssql.Request(pool);
           await notifyReq
             .input("AuthorID", mssql.Int, AuthorID)
             .input("Msg", mssql.NVarChar, msg)
-            .input("RecipeID", mssql.Int, RecipeID).query(`
-    INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
-    VALUES (@AuthorID, @Msg, 'Favorite', '/recipe/@RecipeID', 0, DATEADD(hour, 7, GETUTCDATE()))
-  `);
+            .input("Link", mssql.VarChar, link) // Truyền biến Link vào
+            .query(`
+                INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
+                VALUES (@AuthorID, @Msg, 'Favorite', @Link, 0, DATEADD(hour, 7, GETUTCDATE()))
+            `);
         }
       }
 
