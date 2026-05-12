@@ -1,5 +1,5 @@
 // ==============================================================================
-// PHẦN 1: NẠP CHÌA KHÓA VÀ THƯ VIỆN (PHẢI NẰM TRÊN CÙNG)
+// PHẦN 1: THÊM CHÌA KHÓA VÀ THƯ VIỆN
 // ==============================================================================
 require("dotenv").config();
 const express = require("express");
@@ -10,7 +10,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
-const path = require("path"); // <--- Dời thằng path lên đây cho chuẩn bài
+const path = require("path");
 
 // Thư viện Upload ảnh Cloudinary
 const multer = require("multer");
@@ -29,8 +29,8 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: "KND_Food_Images", // Thư mục cất ảnh trên mây
-    // allowedFormats: ["jpg", "jpeg", "png", "webp", "gif"], // Giữ nguyên comment này để chống lỗi văng game
+    folder: "KND_Food_Images", // Thư mục ảnh trên Cloudinary
+    // allowedFormats: ["jpg", "jpeg", "png", "webp", "gif"], // Giữ nguyên comment này để chống lỗi văng nếu upload nhầm file khác định dạng
   },
 });
 
@@ -107,7 +107,7 @@ const isAdmin = (req, res, next) => {
 // API Đăng ký tài khoản mới
 app.post("/api/register", async (req, res) => {
   try {
-    // ĐÃ SỬA: Lấy thêm Username từ req.body
+    // Lấy thêm Username từ req.body
     const { FullName, Email, Password, Username } = req.body;
     
     await poolConnect;
@@ -138,7 +138,7 @@ app.post("/api/register", async (req, res) => {
       .request()
       .input("FullName", mssql.NVarChar, FullName)
       .input("Email", mssql.VarChar, Email)
-      .input("Username", mssql.VarChar, Username) // ĐÃ SỬA: Truyền Username vào
+      .input("Username", mssql.VarChar, Username)
       .input("PasswordHash", mssql.VarChar, hashedPassword)
       .input("Role", mssql.VarChar, "User").query(`
                 INSERT INTO Users (FullName, Email, Username, PasswordHash, Role) 
@@ -148,7 +148,7 @@ app.post("/api/register", async (req, res) => {
     res.status(201).json({ message: "Đăng ký thành công!" });
   } catch (err) {
     console.error("Lỗi đăng ký: ", err);
-    // Vẫn giữ lại catch 2627 phòng hờ các rủi ro Unique khác ở Database
+    // Vẫn giữ lại catch 2627 phòng hờ các rủi ro khác ở Database
     if (err.number === 2627) {
       return res.status(400).json({ message: "Thông tin đăng ký (Email hoặc ID) đã tồn tại!" });
     }
@@ -173,17 +173,17 @@ app.get("/api/users", authenticateToken, isAdminOrStaff, async (req, res) => {
   }
 });
 
-// API ĐĂNG NHẬP TK
+// API ĐĂNG NHẬP TÀI KHOẢN
 app.post("/api/login", async (req, res) => {
   try {
-    // ĐÃ SỬA: Hứng 'identifier' từ Frontend gửi lên (có thể là Email hoặc ID)
+    // Hứng 'identifier' từ Frontend gửi lên (có thể là Email hoặc ID)
     const { identifier, Password } = req.body;
     await poolConnect;
 
     const result = await pool
       .request()
       .input("Identifier", mssql.VarChar, identifier)
-      // ĐÃ SỬA: Tìm kiếm user có Email HOẶC Username khớp với identifier khách nhập
+      // Tìm kiếm user có Email HOẶC Username khớp với identifier khách nhập
       .query("SELECT * FROM Users WHERE Email = @Identifier OR Username = @Identifier");
 
     const user = result.recordset[0];
@@ -191,7 +191,7 @@ app.post("/api/login", async (req, res) => {
     if (!user) {
       return res
         .status(400)
-        // ĐÃ SỬA: Sửa lại câu báo lỗi cho chuẩn xác với giao diện mới
+        // Sửa lại câu báo lỗi cho chuẩn xác với giao diện mới
         .json({ message: "Email, ID người dùng hoặc Mật khẩu không chính xác!" });
     }
 
@@ -210,7 +210,7 @@ app.post("/api/login", async (req, res) => {
     );
 
     res.json({
-      message: `Chào mừng ${user.FullName} trở lại!`,
+      message: `Xin chào ${user.FullName}!`,
       token: token,
       user: {
         UserID: user.UserID,
@@ -1743,7 +1743,7 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
       },
     );
 
-    // 🛑 LỚP KHIÊN BẢO VỆ: Kiểm tra xem AI trả về cái gì
+    // LỚP KHIÊN BẢO VỆ: Kiểm tra xem AI trả về cái gì
     const contentType = pythonResponse.headers.get("content-type") || "";
     if (!pythonResponse.ok || !contentType.includes("application/json")) {
       const errorHtml = await pythonResponse.text();
@@ -1765,6 +1765,7 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
             SELECT 
                 r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
                 r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
+                ISNULL(r.Views, 0) AS Views, -- ĐÃ SỬA: Lấy thêm cột Lượt xem ở đây!
                 ISNULL(c.AverageRating, 0) AS AverageRating,
                 ISNULL(c.ReviewCount, 0) AS ReviewCount
             FROM Recipes r
