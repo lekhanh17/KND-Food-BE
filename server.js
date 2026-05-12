@@ -1765,7 +1765,7 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
             SELECT 
                 r.RecipeID, r.Title, r.ImageURL, r.Difficulty,
                 r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
-                ISNULL(r.Views, 0) AS Views, -- ĐÃ SỬA: Lấy thêm cột Lượt xem ở đây!
+                ISNULL(r.Views, 0) AS ViewCount,
                 ISNULL(c.AverageRating, 0) AS AverageRating,
                 ISNULL(c.ReviewCount, 0) AS ReviewCount
             FROM Recipes r
