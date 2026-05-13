@@ -1694,8 +1694,10 @@ app.put("/api/recipes/:id/view", async (req, res) => {
   }
 });
 
+
+
 // ==========================================
-// API GỢI Ý MÓN ĂN (GỌI SANG PYTHON AI SERVICE)
+// API GỢI Ý MÓN ĂN (GỌI SANG PYTHON AI SERVICE - HYBRID)
 // ==========================================
 app.get("/api/recipes/recommend/:id", async (req, res) => {
   try {
@@ -1731,14 +1733,37 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
       };
     });
 
+    // ==========================================
+    // MỚI THÊM: TRUY VẤN LẤY MA TRẬN HÀNH VI NGƯỜI DÙNG
+    // ==========================================
+    const interactionResult = await request.query(`
+        SELECT 
+            UserID, 
+            RecipeID, 
+            SUM(Score) as TotalScore
+        FROM (
+            -- Người dùng lưu công thức được tính 3 điểm
+            SELECT UserID, RecipeID, 3 AS Score FROM Favorites
+            UNION ALL
+            -- Người dùng đánh giá được tính điểm bằng đúng số Sao
+            SELECT UserID, RecipeID, CAST(Rating AS INT) AS Score FROM Comments
+        ) AS UserInteractions
+        GROUP BY UserID, RecipeID
+    `);
+    const allInteractions = interactionResult.recordset;
+    // ==========================================
+
     const pythonResponse = await fetch(
-      "https://knd-food-ai.onrender.com/api/recommend",
+     "https://knd-food-ai.onrender.com/api/recommend",
+     // Bật đường dẫn Local lên:
+      //"http://127.0.0.1:8000/api/recommend",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           target_recipe_id: targetRecipeId,
           all_recipes: allRecipes,
+          interactions: allInteractions, // ĐÃ BƠM DỮ LIỆU HÀNH VI SANG PYTHON TẠI ĐÂY
         }),
       },
     );
