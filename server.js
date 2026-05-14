@@ -736,7 +736,7 @@ app.get("/api/recipes", async (req, res) => {
         r.PrepTime, r.CookTime, r.CategoryID, u.FullName,
         ISNULL(c.AverageRating, 0) AS AverageRating,
         ISNULL(c.ReviewCount, 0) AS ReviewCount,
-        r.ViewCount
+        ISNULL(r.ViewCount, 0) AS ViewCount -- Đã chống NULL
     FROM Recipes r
     LEFT JOIN Users u ON r.UserID = u.UserID
     LEFT JOIN (
@@ -747,7 +747,8 @@ app.get("/api/recipes", async (req, res) => {
         FROM Comments
         GROUP BY RecipeID
     ) c ON r.RecipeID = c.RecipeID
-    WHERE r.Status = 'Approved' OR r.Status IS NULL
+    -- Đồng bộ điều kiện duyệt với API Món Nổi Bật để tránh lộ hàng nháp:
+    WHERE r.Status = 'Approved' OR r.Status = 'Published' 
     ORDER BY r.RecipeID DESC
 `);
 
@@ -978,7 +979,7 @@ app.get("/api/recipes/featured", async (req, res) => {
           GROUP BY RecipeID
       ) c ON r.RecipeID = c.RecipeID
       WHERE r.Status = 'Approved' OR r.Status = 'Published'
-      ORDER BY c.AverageRating DESC, c.ReviewCount DESC
+      ORDER BY c.AverageRating DESC, c.ReviewCount DESC, r.ViewCount DESC
     `);
 
     res.status(200).json(result.recordset);
