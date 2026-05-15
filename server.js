@@ -743,7 +743,7 @@ app.get("/api/recipes", async (req, res) => {
         SELECT 
             RecipeID, 
             AVG(CAST(Rating AS FLOAT)) AS AverageRating, 
-            COUNT(CommentID) AS ReviewCount
+            COUNT(Rating) AS ReviewCount
         FROM Comments
         GROUP BY RecipeID
     ) c ON r.RecipeID = c.RecipeID
@@ -974,7 +974,7 @@ app.get("/api/recipes/featured", async (req, res) => {
           SELECT 
               RecipeID, 
               AVG(CAST(Rating AS FLOAT)) AS AverageRating, 
-              COUNT(CommentID) AS ReviewCount
+              COUNT(Rating) AS ReviewCount
           FROM Comments
           GROUP BY RecipeID
       ) c ON r.RecipeID = c.RecipeID
@@ -1370,21 +1370,16 @@ app.get("/api/comments/recipe/:recipeId", async (req, res) => {
 
 // ==========================================
 // API ĐĂNG BÌNH LUẬN MỚI (HỖ TRỢ TỐI ĐA 3 ẢNH) + GỬI THÔNG BÁO
+// SỬA ĐỔI: Chấm sao 1 lần, nhưng được phép bình luận nhiều lần.
 // ==========================================
-// SỬA: Đổi từ upload.single("Image") sang upload.array("Images", 3)
 app.post(
   "/api/comments",
   authenticateToken,
   upload.array("Images", 3),
   async (req, res) => {
-    const { RecipeID, Content, Rating } = req.body;
-    const UserID = req.user.userId; // Lấy từ Token đã giải mã
-
-    if (!Rating || Rating < 1 || Rating > 5) {
-      return res
-        .status(400)
-        .json({ message: "Vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" });
-    }
+    const { RecipeID, Content } = req.body;
+    let { Rating } = req.body; // Dùng let vì có thể sẽ ép nó thành NULL
+    const UserID = req.user.userId;
 
     if (!Content || Content.trim() === "") {
       return res
@@ -1392,10 +1387,8 @@ app.post(
         .json({ message: "Nội dung bình luận không được để trống!" });
     }
 
-    // SỬA: XỬ LÝ MẢNG ẢNH (NẾU CÓ)
     let ImageURL = null;
     if (req.files && req.files.length > 0) {
-      // Lấy tất cả đường dẫn ảnh từ mảng req.files, nối lại bằng dấu phẩy
       ImageURL = req.files.map((file) => file.path).join(",");
     }
 
@@ -1405,57 +1398,78 @@ app.post(
       await transaction.begin();
 
       // ====================================================
-      // KIỂM TRA XEM TÀI KHOẢN ĐÃ ĐÁNH GIÁ CHƯA
+      // KIỂM TRA XEM TÀI KHOẢN ĐÃ ĐÁNH GIÁ (CHẤM SAO) CHƯA
       // ====================================================
       const checkSpamReq = new mssql.Request(transaction);
       const checkSpamRes = await checkSpamReq
         .input("CheckRecipeID", mssql.Int, RecipeID)
         .input("CheckUserID", mssql.Int, UserID).query(`
                 SELECT CommentID FROM Comments 
-                WHERE RecipeID = @CheckRecipeID AND UserID = @CheckUserID
+                WHERE RecipeID = @CheckRecipeID 
+                AND UserID = @CheckUserID 
+                AND Rating IS NOT NULL -- Chỉ check xem đã CÓ SAO nào chưa
             `);
 
+      // NẾU ĐÃ TỪNG CHẤM SAO RỒI MÀ LẠI CỐ TÌNH GỬI THÊM SAO
+      // -> Ép cái Rating của lần này thành NULL để chỉ lưu nội dung bình luận
       if (checkSpamRes.recordset.length > 0) {
-        await transaction.rollback();
-        return res.status(400).json({
-          message:
-            "Bạn đã đánh giá món ăn này rồi. Mỗi tài khoản chỉ được đánh giá 1 lần!",
-        });
+        Rating = null; 
+      } else {
+        // NẾU CHƯA TỪNG CHẤM SAO (Đây là lần đánh giá đầu tiên)
+        // Bắt buộc kiểm tra xem họ có gửi số sao hợp lệ không
+        if (!Rating || Rating < 1 || Rating > 5) {
+            await transaction.rollback();
+            return res.status(400).json({ 
+                message: "Lần đầu bình luận vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" 
+            });
+        }
       }
 
       // ====================================================
-      // BƯỚC A: CHÈN BÌNH LUẬN VÀO DB (KÈM CHUỖI LINK ẢNH)
+      // BƯỚC A: CHÈN BÌNH LUẬN VÀO DB
       // ====================================================
       const commentReq = new mssql.Request(transaction);
-      const resultComment = await commentReq
-        .input("RecipeID", mssql.Int, RecipeID)
-        .input("UserID", mssql.Int, UserID)
-        .input("Content", mssql.NVarChar, Content)
-        .input("Rating", mssql.Int, Rating)
-        .input("ImageURL", mssql.NVarChar, ImageURL) // Thêm tham số ảnh (chuỗi cách nhau dấu phẩy)
-        .query(`
+      
+      // Nếu Rating là NULL (đã vote rồi), thì không input Rating vào SQL
+      if (Rating === null) {
+          await commentReq
+            .input("RecipeID", mssql.Int, RecipeID)
+            .input("UserID", mssql.Int, UserID)
+            .input("Content", mssql.NVarChar, Content)
+            .input("ImageURL", mssql.NVarChar, ImageURL);
+            
+          var resultComment = await commentReq.query(`
+                INSERT INTO Comments (RecipeID, UserID, Content, Rating, ImageURL, CreatedAt)
+                OUTPUT INSERTED.*
+                VALUES (@RecipeID, @UserID, @Content, NULL, @ImageURL, DATEADD(hour, 7, GETUTCDATE()))
+            `);
+      } else {
+          // Nếu có Rating (Lần vote đầu tiên)
+          await commentReq
+            .input("RecipeID", mssql.Int, RecipeID)
+            .input("UserID", mssql.Int, UserID)
+            .input("Content", mssql.NVarChar, Content)
+            .input("Rating", mssql.Int, Rating)
+            .input("ImageURL", mssql.NVarChar, ImageURL);
+            
+          var resultComment = await commentReq.query(`
                 INSERT INTO Comments (RecipeID, UserID, Content, Rating, ImageURL, CreatedAt)
                 OUTPUT INSERTED.*
                 VALUES (@RecipeID, @UserID, @Content, @Rating, @ImageURL, DATEADD(hour, 7, GETUTCDATE()))
             `);
+      }
 
       const newComment = resultComment.recordset[0];
 
       // ====================================================
-      // BƯỚC B: LẤY INFO USER
+      // BƯỚC B & C: LẤY INFO VÀ GỬI THÔNG BÁO (GIỮ NGUYÊN)
       // ====================================================
       const userReq = new mssql.Request(transaction);
       const userResult = await userReq
         .input("UID", mssql.Int, UserID)
-        .query(
-          "SELECT FullName, Username, Avatar FROM Users WHERE UserID = @UID",
-        );
-
+        .query("SELECT FullName, Username, Avatar FROM Users WHERE UserID = @UID");
       const userInfo = userResult.recordset[0];
 
-      // ====================================================
-      // BƯỚC C: GỬI THÔNG BÁO CHO TÁC GIẢ
-      // ====================================================
       const recipeReq = new mssql.Request(transaction);
       const recipeInfo = await recipeReq
         .input("RID", mssql.Int, RecipeID)
@@ -1466,8 +1480,9 @@ app.post(
 
       if (authorID !== UserID) {
         const notifyReq = new mssql.Request(transaction);
-        // Đổi chữ tí cho xôm: "đã gửi đánh giá kèm ảnh..."
-        const notifyMsg = `${userInfo.FullName} đã gửi đánh giá ${Rating} sao ${ImageURL ? "(kèm hình ảnh) " : ""}về món "${recipeTitle}" của bạn.`;
+        // Tùy biến thông báo: Lần đầu thì kêu "Đánh giá X sao", lần 2 thì kêu "Đã bình luận"
+        let actionText = Rating ? `đánh giá ${Rating} sao` : `bình luận`;
+        const notifyMsg = `${userInfo.FullName} đã ${actionText} ${ImageURL ? "(kèm hình ảnh) " : ""}về món "${recipeTitle}" của bạn.`;
 
         await notifyReq
           .input("TargetUID", mssql.Int, authorID)
@@ -1480,7 +1495,6 @@ app.post(
 
       await transaction.commit();
 
-      // Trả về dữ liệu gộp
       res.status(201).json({
         ...newComment,
         FullName: userInfo.FullName,
@@ -1660,7 +1674,7 @@ app.get("/api/favorites/my-favorites", authenticateToken, async (req, res) => {
                     SELECT 
                         RecipeID, 
                         AVG(CAST(Rating AS FLOAT)) AS AverageRating, 
-                        COUNT(CommentID) AS ReviewCount
+                        COUNT(Rating) AS ReviewCount
                     FROM Comments
                     GROUP BY RecipeID
                 ) c ON r.RecipeID = c.RecipeID
@@ -1735,7 +1749,7 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
     });
 
     // ==========================================
-    // MỚI THÊM: TRUY VẤN LẤY MA TRẬN HÀNH VI NGƯỜI DÙNG
+    // TRUY VẤN LẤY MA TRẬN HÀNH VI NGƯỜI DÙNG
     // ==========================================
     const interactionResult = await request.query(`
         SELECT 
@@ -1746,8 +1760,9 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
             -- Người dùng lưu công thức được tính 3 điểm
             SELECT UserID, RecipeID, 3 AS Score FROM Favorites
             UNION ALL
-            -- Người dùng đánh giá được tính điểm bằng đúng số Sao
-            SELECT UserID, RecipeID, CAST(Rating AS INT) AS Score FROM Comments
+            SELECT UserID, RecipeID, CAST(Rating AS INT) AS Score 
+            FROM Comments 
+            WHERE Rating IS NOT NULL
         ) AS UserInteractions
         GROUP BY UserID, RecipeID
     `);
@@ -1756,7 +1771,7 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
 
     const pythonResponse = await fetch(
      "https://knd-food-ai.onrender.com/api/recommend",
-     // Bật đường dẫn Local lên:
+      // Bật đường dẫn Local lên:
       //"http://127.0.0.1:8000/api/recommend",
       {
         method: "POST",
@@ -1764,7 +1779,7 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
         body: JSON.stringify({
           target_recipe_id: targetRecipeId,
           all_recipes: allRecipes,
-          interactions: allInteractions, // ĐÃ BƠM DỮ LIỆU HÀNH VI SANG PYTHON TẠI ĐÂY
+          interactions: allInteractions, // ĐÃ BƠM DỮ LIỆU HÀNH VI SANG PYTHON
         }),
       },
     );
@@ -1774,8 +1789,7 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
     if (!pythonResponse.ok || !contentType.includes("application/json")) {
       const errorHtml = await pythonResponse.text();
       console.error("AI KHÔNG TRẢ VỀ JSON! Trạng thái:", pythonResponse.status);
-      console.error("Nội dung HTML:", errorHtml.substring(0, 200)); // In 200 chữ đầu để bắt bệnh
-      // Trả về mảng rỗng để Frontend không bị sập (sẽ hiện "AI đang học hỏi")
+      console.error("Nội dung HTML:", errorHtml.substring(0, 200)); 
       return res.status(200).json([]);
     }
 
@@ -1797,7 +1811,7 @@ app.get("/api/recipes/recommend/:id", async (req, res) => {
             FROM Recipes r
             LEFT JOIN Users u ON r.UserID = u.UserID
             LEFT JOIN (
-                SELECT RecipeID, AVG(CAST(Rating AS FLOAT)) AS AverageRating, COUNT(CommentID) AS ReviewCount
+                SELECT RecipeID, AVG(CAST(Rating AS FLOAT)) AS AverageRating, COUNT(Rating) AS ReviewCount
                 FROM Comments GROUP BY RecipeID
             ) c ON r.RecipeID = c.RecipeID
             WHERE r.RecipeID IN (${idList})
