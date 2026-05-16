@@ -1348,6 +1348,7 @@ app.get("/api/comments/recipe/:recipeId", async (req, res) => {
     const { recipeId } = req.params;
     await poolConnect;
 
+    // GET không cần sửa nhiều vì c.* đã tự động lấy luôn ParentID về
     const result = await pool.request().input("RecipeID", mssql.Int, recipeId)
       .query(`
                 SELECT 
@@ -1369,16 +1370,16 @@ app.get("/api/comments/recipe/:recipeId", async (req, res) => {
 });
 
 // ==========================================
-// API ĐĂNG BÌNH LUẬN MỚI (HỖ TRỢ TỐI ĐA 3 ẢNH) + GỬI THÔNG BÁO
-// SỬA ĐỔI: Chấm sao 1 lần, nhưng được phép bình luận nhiều lần.
+// API ĐĂNG BÌNH LUẬN MỚI (HỖ TRỢ TRẢ LỜI BÌNH LUẬN / ĐĂNG ẢNH KÈM THEO)
 // ==========================================
 app.post(
   "/api/comments",
   authenticateToken,
   upload.array("Images", 3),
   async (req, res) => {
-    const { RecipeID, Content } = req.body;
-    let { Rating } = req.body; // Dùng let vì có thể sẽ ép nó thành NULL
+    // Lấy thêm ParentID từ Frontend gửi lên
+    const { RecipeID, Content, ParentID } = req.body; 
+    let { Rating } = req.body; 
     const UserID = req.user.userId;
 
     if (!Content || Content.trim() === "") {
@@ -1389,7 +1390,8 @@ app.post(
 
     let ImageURL = null;
     if (req.files && req.files.length > 0) {
-      ImageURL = req.files.map((file) => file.path).join(",");
+      // Giữ lại bản vá lỗi ảnh thông minh bằng secure_url
+      ImageURL = req.files.map((file) => file.secure_url || file.path).join(",");
     }
 
     const transaction = new mssql.Transaction(pool);
@@ -1407,17 +1409,14 @@ app.post(
                 SELECT CommentID FROM Comments 
                 WHERE RecipeID = @CheckRecipeID 
                 AND UserID = @CheckUserID 
-                AND Rating IS NOT NULL -- Chỉ check xem đã CÓ SAO nào chưa
+                AND Rating IS NOT NULL
             `);
 
-      // NẾU ĐÃ TỪNG CHẤM SAO RỒI MÀ LẠI CỐ TÌNH GỬI THÊM SAO
-      // -> Ép cái Rating của lần này thành NULL để chỉ lưu nội dung bình luận
       if (checkSpamRes.recordset.length > 0) {
         Rating = null; 
       } else {
-        // NẾU CHƯA TỪNG CHẤM SAO (Đây là lần đánh giá đầu tiên)
-        // Bắt buộc kiểm tra xem họ có gửi số sao hợp lệ không
-        if (!Rating || Rating < 1 || Rating > 5) {
+        // Nếu là Bình luận Trả lời (có ParentID) thì KHÔNG CẦN ÉP SAO
+        if (!ParentID && (!Rating || Rating < 1 || Rating > 5)) {
             await transaction.rollback();
             return res.status(400).json({ 
                 message: "Lần đầu bình luận vui lòng chọn số sao hợp lệ (từ 1 đến 5)!" 
@@ -1425,44 +1424,49 @@ app.post(
         }
       }
 
+      // Ép buộc gán Rating = NULL nếu đây là 1 hành động Trả lời (REPLY) (để tránh tình trạng người dùng lợi dụng ParentID để spam đánh giá 5 sao)
+      if (ParentID) {
+          Rating = null;
+      }
+
       // ====================================================
       // BƯỚC A: CHÈN BÌNH LUẬN VÀO DB
       // ====================================================
       const commentReq = new mssql.Request(transaction);
       
-      // Nếu Rating là NULL (đã vote rồi), thì không input Rating vào SQL
       if (Rating === null) {
           await commentReq
             .input("RecipeID", mssql.Int, RecipeID)
             .input("UserID", mssql.Int, UserID)
-            .input("Content", mssql.NVarChar, Content)
-            .input("ImageURL", mssql.NVarChar, ImageURL);
+            .input("Content", mssql.NVarChar(mssql.MAX), Content)
+            .input("ImageURL", mssql.NVarChar(mssql.MAX), ImageURL)
+            .input("ParentID", mssql.Int, ParentID || null); 
             
           var resultComment = await commentReq.query(`
-                INSERT INTO Comments (RecipeID, UserID, Content, Rating, ImageURL, CreatedAt)
+                INSERT INTO Comments (RecipeID, UserID, Content, Rating, ImageURL, ParentID, CreatedAt)
                 OUTPUT INSERTED.*
-                VALUES (@RecipeID, @UserID, @Content, NULL, @ImageURL, DATEADD(hour, 7, GETUTCDATE()))
+                VALUES (@RecipeID, @UserID, @Content, NULL, @ImageURL, @ParentID, DATEADD(hour, 7, GETUTCDATE()))
             `);
       } else {
-          // Nếu có Rating (Lần vote đầu tiên)
           await commentReq
             .input("RecipeID", mssql.Int, RecipeID)
             .input("UserID", mssql.Int, UserID)
-            .input("Content", mssql.NVarChar, Content)
+            .input("Content", mssql.NVarChar(mssql.MAX), Content)
             .input("Rating", mssql.Int, Rating)
-            .input("ImageURL", mssql.NVarChar, ImageURL);
+            .input("ImageURL", mssql.NVarChar(mssql.MAX), ImageURL)
+            .input("ParentID", mssql.Int, ParentID || null);
             
           var resultComment = await commentReq.query(`
-                INSERT INTO Comments (RecipeID, UserID, Content, Rating, ImageURL, CreatedAt)
+                INSERT INTO Comments (RecipeID, UserID, Content, Rating, ImageURL, ParentID, CreatedAt)
                 OUTPUT INSERTED.*
-                VALUES (@RecipeID, @UserID, @Content, @Rating, @ImageURL, DATEADD(hour, 7, GETUTCDATE()))
+                VALUES (@RecipeID, @UserID, @Content, @Rating, @ImageURL, @ParentID, DATEADD(hour, 7, GETUTCDATE()))
             `);
       }
 
       const newComment = resultComment.recordset[0];
 
       // ====================================================
-      // BƯỚC B & C: LẤY INFO VÀ GỬI THÔNG BÁO (GIỮ NGUYÊN)
+      // BƯỚC B & C: LẤY INFO VÀ GỬI THÔNG BÁO THÔNG MINH
       // ====================================================
       const userReq = new mssql.Request(transaction);
       const userResult = await userReq
@@ -1478,16 +1482,49 @@ app.post(
       const authorID = recipeInfo.recordset[0].UserID;
       const recipeTitle = recipeInfo.recordset[0].Title;
 
-      if (authorID !== UserID) {
+      // LOGIC GỬI CHUÔNG THÔNG BÁO
+      let notifiedUsers = [UserID]; 
+
+      // KỊCH BẢN 1: NẾU LÀ CÂU TRẢ LỜI (REPLY) -> Gửi cho chủ nhân của bình luận gốc
+      if (ParentID) {
+        const parentReq = new mssql.Request(transaction);
+        const parentRes = await parentReq
+            .input("PID", mssql.Int, ParentID)
+            .query("SELECT UserID FROM Comments WHERE CommentID = @PID");
+
+        if (parentRes.recordset.length > 0) {
+          const parentAuthorID = parentRes.recordset[0].UserID;
+
+          if (!notifiedUsers.includes(parentAuthorID)) {
+            const notifyParentReq = new mssql.Request(transaction);
+            const notifyMsgParent = `${userInfo.FullName} đã trả lời bình luận của bạn trong món "${recipeTitle}".`;
+
+            // Đổi 'Reply' thành 'Comment' để Frontend nhận diện được
+            await notifyParentReq
+              .input("TargetUID", mssql.Int, parentAuthorID)
+              .input("Msg", mssql.NVarChar(mssql.MAX), notifyMsgParent)
+              .input("Link", mssql.NVarChar(255), `/recipe/${RecipeID}`).query(`
+                  INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
+                  VALUES (@TargetUID, @Msg, 'Comment', @Link, 0, DATEADD(hour, 7, GETUTCDATE()))
+              `);
+
+            notifiedUsers.push(parentAuthorID); 
+          }
+        }
+      }
+
+      // KỊCH BẢN 2: Gửi thông báo cho Tác giả công thức (Nếu tác giả chưa bị réo tên ở trên)
+      if (!notifiedUsers.includes(authorID)) {
         const notifyReq = new mssql.Request(transaction);
-        // Tùy biến thông báo: Lần đầu thì kêu "Đánh giá X sao", lần 2 thì kêu "Đã bình luận"
-        let actionText = Rating ? `đánh giá ${Rating} sao` : `bình luận`;
+        
+        let actionText = ParentID ? "trả lời bình luận" : (Rating ? `đánh giá ${Rating} sao` : `bình luận`);
         const notifyMsg = `${userInfo.FullName} đã ${actionText} ${ImageURL ? "(kèm hình ảnh) " : ""}về món "${recipeTitle}" của bạn.`;
 
+        // Luôn dùng 'Comment'
         await notifyReq
           .input("TargetUID", mssql.Int, authorID)
-          .input("Msg", mssql.NVarChar, notifyMsg)
-          .input("Link", mssql.NVarChar, `/recipe/${RecipeID}`).query(`
+          .input("Msg", mssql.NVarChar(mssql.MAX), notifyMsg)
+          .input("Link", mssql.NVarChar(255), `/recipe/${RecipeID}`).query(`
                     INSERT INTO Notifications (UserID, Message, Type, Link, IsRead, CreatedAt)
                     VALUES (@TargetUID, @Msg, 'Comment', @Link, 0, DATEADD(hour, 7, GETUTCDATE()))
                 `);
@@ -1510,7 +1547,7 @@ app.post(
 );
 
 // ==========================================
-// API XÓA BÌNH LUẬN (VẪN NHƯ CŨ)
+// API XÓA BÌNH LUẬN (UPDATE XÓA CẢ TRẢ LỜI BÌNH LUẬN)
 // ==========================================
 app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
   try {
@@ -1534,11 +1571,16 @@ app.delete("/api/comments/:commentId", authenticateToken, async (req, res) => {
     const { CommentOwner, RecipeAuthor } = checkReq.recordset[0];
 
     if (currentUserId === CommentOwner || currentUserId === RecipeAuthor) {
-      // NOTE: Tạm thời chỉ xóa Database, chưa cấu hình xóa file ảnh trên Cloudinary để đơn giản code
+      
+      // Xóa các bình luận con (những bình luận có ParentID trỏ về comment này) trước, 
+      // sau đó mới xóa bình luận cha để chống lỗi Foreign Key
       await pool
         .request()
         .input("CID", mssql.Int, commentId)
-        .query("DELETE FROM Comments WHERE CommentID = @CID");
+        .query(`
+            DELETE FROM Comments WHERE ParentID = @CID;
+            DELETE FROM Comments WHERE CommentID = @CID;
+        `);
 
       return res.json({ message: "Đã xóa bình luận thành công!" });
     } else {
