@@ -990,7 +990,7 @@ app.get("/api/recipes/featured", async (req, res) => {
 });
 
 // ==========================================
-// API TÌM KIẾM NHANH (NÂNG CẤP TÁCH TỪ KHÓA)
+// API TÌM KIẾM NHANH (NÂNG CẤP VÉT TỦ LẠNH & TÁCH TỪ KHÓA)
 // ==========================================
 app.get("/api/search", async (req, res) => {
   try {
@@ -1031,16 +1031,29 @@ app.get("/api/search", async (req, res) => {
       requestRecipes.input(paramName, sql.NVarChar, paramValue);
       requestUsers.input(paramName, sql.NVarChar, paramValue);
 
-      // Yêu cầu tìm các món chứa ĐỒNG THỜI các từ khóa trong Tên món
-      recipeConditions.push(`Title LIKE @${paramName}`);
+      // ==============================================================
+      // NÂNG CẤP TẠI ĐÂY: TÌM KẾT HỢP (TÊN MÓN ĂN HOẶC TÊN NGUYÊN LIỆU)
+      // Dùng EXISTS để tìm sang bảng Ingredients mà không bị trùng dữ liệu
+      // ==============================================================
+      recipeConditions.push(`
+        (
+          Title LIKE @${paramName} 
+          OR EXISTS (
+            SELECT 1 FROM Ingredients i 
+            WHERE i.RecipeID = Recipes.RecipeID 
+            AND i.IngredientName LIKE @${paramName}
+          )
+        )
+      `);
 
       // User thì tìm trong Username hoặc FullName
       userConditions.push(
-        `(Username LIKE @${paramName} OR FullName LIKE @${paramName})`,
+        `(Username LIKE @${paramName} OR FullName LIKE @${paramName})`
       );
     });
 
     // Nối các câu điều kiện lại bằng chữ AND
+    // Nghĩa là: Món ăn phải thỏa mãn TẤT CẢ các từ khóa (có trong Tên món HOẶC Nguyên liệu)
     const recipeWhere = recipeConditions.join(" AND ");
     const userWhere = userConditions.join(" AND ");
 
