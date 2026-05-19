@@ -586,7 +586,75 @@ app.post("/api/reset-password", async (req, res) => {
 });
 
 // ==========================================
-// API TẠO CÔNG THỨC MỚI (CÓ THÔNG BÁO CHO ADMIN/STAFF) - ĐÃ ĐỘ CLOUDINARY
+// API QUẢN LÝ DANH MỤC (DÀNH CHO ADMIN)
+// ==========================================
+
+// Thêm danh mục mới
+app.post("/api/categories", async (req, res) => {
+  try {
+    const { CategoryName } = req.body;
+
+    if (!CategoryName || CategoryName.trim() === "") {
+      return res.status(400).json({ message: "Tên danh mục không được để trống!" });
+    }
+
+    // Kiểm tra xem danh mục đã tồn tại chưa
+    const checkExist = await pool.request()
+      .input("CategoryName", sql.NVarChar, CategoryName.trim())
+      .query("SELECT * FROM Categories WHERE CategoryName = @CategoryName");
+
+    if (checkExist.recordset.length > 0) {
+      return res.status(400).json({ message: "Danh mục này đã tồn tại!" });
+    }
+
+    // Thêm vào Database
+    await pool.request()
+      .input("CategoryName", sql.NVarChar, CategoryName.trim())
+      .query("INSERT INTO Categories (CategoryName) VALUES (@CategoryName)");
+
+    res.status(200).json({ message: "Thêm danh mục thành công!" });
+  } catch (error) {
+    console.error("Lỗi khi thêm danh mục:", error);
+    res.status(500).json({ message: "Lỗi hệ thống máy chủ" });
+  }
+});
+
+// ==========================================
+// API XÓA DANH MỤC (CÓ KIỂM TRA RÀNG BUỘC)
+// ==========================================
+app.delete("/api/categories/:id", async (req, res) => {
+  try {
+    const categoryId = req.params.id;
+
+    // 1. Kiểm tra xem danh mục này có đang chứa món ăn nào không
+    const checkUsage = await pool.request()
+      .input("CategoryID", sql.Int, categoryId)
+      .query("SELECT COUNT(*) as count FROM Recipes WHERE CategoryID = @CategoryID");
+
+    if (checkUsage.recordset[0].count > 0) {
+      return res.status(400).json({ 
+        message: `Không thể xóa! Đang có ${checkUsage.recordset[0].count} món ăn thuộc danh mục này.` 
+      });
+    }
+
+    // 2. Nếu trống thì cho phép xóa
+    const result = await pool.request()
+      .input("CategoryID", sql.Int, categoryId)
+      .query("DELETE FROM Categories WHERE CategoryID = @CategoryID");
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ message: "Không tìm thấy danh mục này!" });
+    }
+
+    res.status(200).json({ message: "Xóa danh mục thành công!" });
+  } catch (error) {
+    console.error("Lỗi khi xóa danh mục:", error);
+    res.status(500).json({ message: "Lỗi hệ thống máy chủ" });
+  }
+});
+
+// ==========================================
+// API TẠO CÔNG THỨC MỚI (CÓ THÔNG BÁO CHO ADMIN/STAFF) - ĐÃ CÓ CLOUDINARY
 // ==========================================
 app.post("/api/recipes/create", upload.any(), async (req, res) => {
   const transaction = new mssql.Transaction(pool);
@@ -1032,7 +1100,7 @@ app.get("/api/search", async (req, res) => {
       requestUsers.input(paramName, sql.NVarChar, paramValue);
 
       // ==============================================================
-      // NÂNG CẤP TẠI ĐÂY: TÌM KẾT HỢP (TÊN MÓN ĂN HOẶC TÊN NGUYÊN LIỆU)
+      // TÌM KẾT HỢP (TÊN MÓN ĂN HOẶC TÊN NGUYÊN LIỆU)
       // Dùng EXISTS để tìm sang bảng Ingredients mà không bị trùng dữ liệu
       // ==============================================================
       recipeConditions.push(`
@@ -1053,7 +1121,7 @@ app.get("/api/search", async (req, res) => {
     });
 
     // Nối các câu điều kiện lại bằng chữ AND
-    // Nghĩa là: Món ăn phải thỏa mãn TẤT CẢ các từ khóa (có trong Tên món HOẶC Nguyên liệu)
+    // Nghĩa là Món ăn phải thỏa mãn TẤT CẢ các từ khóa (có trong Tên món HOẶC Nguyên liệu)
     const recipeWhere = recipeConditions.join(" AND ");
     const userWhere = userConditions.join(" AND ");
 
