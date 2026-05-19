@@ -359,7 +359,7 @@ app.put("/api/users/update", async (req, res) => {
       return res.status(400).json({ message: "Email này đã được sử dụng. Vui lòng dùng Email khác!" });
     }
 
-    // 3. VƯỢT QUA HẾT CÁC BÀI KIỂM TRA -> CẬP NHẬT VÀO DATABASE
+    // 3. VƯỢT QUA HẾT CÁC BƯỚC KIỂM TRA -> CẬP NHẬT VÀO DB
     await pool
       .request()
       .input("UserID", mssql.Int, UserID)
