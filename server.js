@@ -1058,7 +1058,7 @@ app.get("/api/recipes/featured", async (req, res) => {
 });
 
 // ==========================================
-// API TÌM KIẾM NHANH (NÂNG CẤP VÉT TỦ LẠNH & TÁCH TỪ KHÓA)
+// API TÌM KIẾM NHANH (NÂNG CẤP TÌM NGUYÊN LIỆU & TÁCH TỪ KHÓA)
 // ==========================================
 app.get("/api/search", async (req, res) => {
   try {
@@ -1100,24 +1100,28 @@ app.get("/api/search", async (req, res) => {
       requestUsers.input(paramName, sql.NVarChar, paramValue);
 
       // ==============================================================
-      // TÌM KẾT HỢP (TÊN MÓN ĂN HOẶC TÊN NGUYÊN LIỆU)
+      // TÌM KẾT HỢP (TÊN MÓN ĂN HOẶC TÊN NGUYÊN LIỆU) - TÌM KHÔNG DẤU
       // Dùng EXISTS để tìm sang bảng Ingredients mà không bị trùng dữ liệu
+      // Áp dụng COLLATE SQL_Latin1_General_CP1_CI_AI để bỏ qua dấu tiếng Việt
       // ==============================================================
       recipeConditions.push(`
         (
-          Title LIKE @${paramName} 
+          Title COLLATE SQL_Latin1_General_CP1_CI_AI LIKE @${paramName} 
           OR EXISTS (
             SELECT 1 FROM Ingredients i 
             WHERE i.RecipeID = Recipes.RecipeID 
-            AND i.IngredientName LIKE @${paramName}
+            AND i.IngredientName COLLATE SQL_Latin1_General_CP1_CI_AI LIKE @${paramName}
           )
         )
       `);
 
-      // User thì tìm trong Username hoặc FullName
-      userConditions.push(
-        `(Username LIKE @${paramName} OR FullName LIKE @${paramName})`
-      );
+      // User thì tìm trong Username hoặc FullName (cũng áp dụng không dấu)
+      userConditions.push(`
+        (
+          Username COLLATE SQL_Latin1_General_CP1_CI_AI LIKE @${paramName} 
+          OR FullName COLLATE SQL_Latin1_General_CP1_CI_AI LIKE @${paramName}
+        )
+      `);
     });
 
     // Nối các câu điều kiện lại bằng chữ AND
